@@ -1,0 +1,134 @@
+/* ── 墨迹界面：笔触作牌，墨团作钮，印章点睛（素材见 ui/inkart.js） ── */
+:root {
+  --ink: #1f1915;
+  --ink-2: #4c4036;
+  --cream: #f4ead2;
+  --seal: #b62a20;
+  --seal-2: #8e1f17;
+  --halo: 0 0 4px rgba(244, 234, 210, 0.96), 0 0 2px rgba(244, 234, 210, 0.96), 0 0 11px rgba(244, 234, 210, 0.78);
+}
+
+/* 印章：边角残破，印面带砂眼 */
+.seal {
+  background: var(--seal); border-radius: 0; box-shadow: inset 0 0 0 1.5px rgba(246, 233, 210, 0.7);
+  -webkit-mask: var(--seal-mask) center / 100% 100% no-repeat; mask: var(--seal-mask) center / 100% 100% no-repeat;
+}
+
+/* 按钮：平时只是一道笔线，移上去才是一笔浓墨 */
+.btn { border: 0; border-radius: 0; background: var(--stroke-line) center bottom / 100% 9px no-repeat; padding: 0.5em 1.5em 0.66em; transition: color 0.15s, transform 0.15s; }
+.btn:hover, .btn:active { background: var(--stroke-a) center / 100% 100% no-repeat; color: var(--cream); }
+.btn.red { background-image: var(--stroke-line-red); }
+.btn.red:hover, .btn.red:active { background: var(--stroke-red) center / 100% 100% no-repeat; color: #fff3e0; }
+.btn.small { padding: 0.28em 0.9em 0.42em; background-size: 100% 7px; }
+.btn.small:hover, .btn.small:active { background-size: 100% 100%; }
+#title .menu .btn { background: var(--stroke-line) center bottom / 100% 10px no-repeat; text-align: left; padding-left: 0.5em; text-shadow: var(--halo); }
+#title .menu .btn.red { background-image: var(--stroke-line-red); }
+#title .menu .btn:hover, #title .menu .btn:active { background: var(--stroke-a) center / 100% 100% no-repeat; text-shadow: none; }
+#title .menu .btn.red:hover, #title .menu .btn.red:active { background: var(--stroke-red) center / 100% 100% no-repeat; }
+#pause .panel .btn { background-position: center bottom; }
+
+/* 纸：墨线框，角上一方朱印的位置留给标题 */
+.paper { border: 0; outline: 0; box-shadow: 0 0 0 2px var(--ink), 0 0 0 7px rgba(244, 234, 210, 0.55), 0 0 0 8px rgba(31, 25, 21, 0.55), 0 14px 44px rgba(30, 22, 14, 0.42); }
+#roles h2, .panel h2 { display: inline-block; padding: 0 0.5em 12px 0; background: var(--stroke-line) left bottom / 100% 10px no-repeat; }
+.panel .head { border-bottom: 0; background: var(--stroke-line) left bottom / 100% 9px no-repeat; padding-bottom: 14px; }
+.panel .head h2 { background: none; padding: 0; }
+.chip.sel { background: var(--stroke-red) center / 100% 100% no-repeat; border-color: transparent; }
+
+/* ── 任务：一笔浓墨上写题，朱印压角 ── */
+#quest { left: 20px; top: 16px; max-width: 460px; padding: 0; background: none; border: 0; display: block; }
+#quest > .seal { position: absolute; left: 9px; top: 8px; width: 44px; height: 44px; font-size: 25px; transform: rotate(-5deg); z-index: 1; }
+#q-title { display: inline-block; min-width: 250px; padding: 12px 70px 14px 68px; font-size: 29px; color: var(--cream); background: var(--stroke-a) center / 100% 100% no-repeat; text-shadow: 0 1px 0 rgba(0, 0, 0, 0.35); white-space: nowrap; }
+#q-desc, #q-extra { margin-left: 16px; max-width: 400px; text-shadow: var(--halo); }
+#q-desc { color: var(--ink); margin-top: 6px; }
+
+/* ── 钱囊 ── */
+#purse { padding: 11px 40px 12px 30px; background: var(--stroke-b) center / 100% 100% no-repeat; border: 0; border-radius: 0; color: var(--cream); text-shadow: 0 1px 0 rgba(0, 0, 0, 0.35); }
+#purse b { color: #ffd9a2; }
+#purse .sep { color: rgba(244, 234, 210, 0.45); }
+#purse .coin { border-color: #e4b95e; background: transparent; }
+#purse .coin::after { border-color: #e4b95e; background: transparent; }
+
+/* ── 小地图：一笔圈成的墨环 ── */
+#minimap { box-shadow: 0 6px 18px rgba(30, 22, 14, 0.3); }
+#mini-wrap::after { content: ''; position: absolute; inset: -7.5%; background: var(--ring) center / 100% 100% no-repeat; pointer-events: none; }
+#mini-north { z-index: 1; }
+#mini-key { right: auto; left: 50%; bottom: -36px; transform: translateX(-50%); background: none; color: var(--ink); text-shadow: var(--halo); white-space: nowrap; }
+
+/* ── 提示、浮签 ── */
+#prompt { padding: 12px 50px 13px 20px; background: var(--stroke-c) center / 100% 100% no-repeat; border: 0; color: var(--cream); text-shadow: 0 1px 0 rgba(0, 0, 0, 0.35); }
+#prompt .key { width: 32px; min-width: 32px; height: 32px; padding: 0; background: var(--cream); color: var(--ink); border: 0; border-radius: 50%; font-weight: bold; text-shadow: none; }
+#prompt small { color: rgba(244, 234, 210, 0.72); }
+.toast { padding: 9px 56px 10px 42px; background: var(--stroke-b) center / 100% 100% no-repeat; border: 0; color: var(--cream); text-shadow: 0 1px 0 rgba(0, 0, 0, 0.35); }
+.toast.gain { background-image: var(--stroke-red); color: #fff3e0; }
+#marker .m-text { background: var(--stroke-c) center / 100% 100% no-repeat; border: 0; color: var(--cream); padding: 3px 20px 4px 12px; }
+#lockhint { background: none; border: 0; color: var(--ink); text-shadow: var(--halo); }
+#hints { color: var(--ink); text-shadow: var(--halo); }
+.bubble { background: rgba(250, 244, 226, 0.95); border: 1.6px solid var(--ink); border-radius: 3px 14px 12px 14px / 14px 3px 14px 10px; box-shadow: 2px 3px 0 rgba(31, 25, 21, 0.2); }
+#banner { text-shadow: 0 0 24px rgba(244, 234, 210, 1), 0 0 9px rgba(244, 234, 210, 1); }
+
+/* ── 题跋：随所到之处换一段《东京梦华录》，落一方小印 ── */
+#colophon { position: absolute; right: calc(var(--vw) * 22); top: 30px; display: flex; flex-direction: row-reverse; align-items: flex-end; gap: 8px; opacity: 0; transition: opacity 1.8s; pointer-events: none; }
+#colophon.show { opacity: 0.78; }
+#colophon .cols { writing-mode: vertical-rl; font-family: var(--xing); font-size: 19px; line-height: 1.75; letter-spacing: 0.2em; color: var(--ink); max-height: 300px; text-shadow: var(--halo); }
+#colophon .cols small { font-family: var(--kai); font-size: 13.5px; letter-spacing: 0.16em; color: var(--ink-2); }
+#colophon .seal { width: 32px; height: 32px; font-size: 13px; writing-mode: vertical-rl; letter-spacing: 0.02em; transform: rotate(3deg); flex: none; }
+#ui.touch #colophon, #ui.narrow #colophon, #ui.short #colophon { display: none; }
+
+/* ── 环形互动菜单：墨团作钮 ── */
+#pie .opt { min-width: 138px; padding: 24px 32px 25px; font-size: 23px; background: var(--blot-a) center / 100% 100% no-repeat; border: 0; border-radius: 0; box-shadow: none; color: var(--cream); text-shadow: 0 1px 0 rgba(0, 0, 0, 0.4); }
+#pie .opt:nth-of-type(2n) { background-image: var(--blot-b); }
+#pie .opt:hover, #pie .opt:active { background: var(--blot-red) center / 100% 100% no-repeat; color: #fff3e0; border: 0; }
+#pie .opt i { color: rgba(244, 234, 210, 0.7); opacity: 1; }
+#pie .core { border: 0; box-shadow: 0 10px 26px rgba(30, 22, 14, 0.35); }
+#pie .core::after { content: ''; position: absolute; inset: -9%; background: var(--ring) center / 100% 100% no-repeat; pointer-events: none; }
+#pie .line { height: 1.6px; background: rgba(31, 25, 21, 0.55); }
+
+/* ── 触屏：墨团按钮，墨环摇杆 ── */
+.tbtn { width: 66px; height: 66px; background: var(--blot-a) center / 100% 100% no-repeat; border: 0; border-radius: 0; box-shadow: none; color: var(--cream); text-shadow: 0 1px 0 rgba(0, 0, 0, 0.4); transition: transform 0.08s; }
+.tbtn:active { background: var(--blot-a) center / 100% 100% no-repeat; color: #fff; transform: scale(0.92); }
+#tbtns { gap: 6px; }
+#tbtns .tbtn:nth-child(2n) { background-image: var(--blot-b); }
+#tb-act { width: 128px; height: 128px; background: var(--blot-red) center / 100% 100% no-repeat; border: 0; box-shadow: none; color: #fff3e0; }
+#tb-act:active { background: var(--blot-red) center / 100% 100% no-repeat; color: #fff; }
+#tb-jump { width: 92px; height: 92px; background-image: var(--blot-b); }
+#joy { border: 0; background: var(--ring) center / 100% 100% no-repeat; box-shadow: none; opacity: 0.85; }
+#joy-knob { width: 76px; height: 76px; margin: -38px; border-radius: 0; background: var(--blot-a) center / 100% 100% no-repeat; box-shadow: none; }
+#joy-hint { border: 0; background: var(--ring) center / 100% 100% no-repeat; color: var(--ink); text-shadow: var(--halo); opacity: 0.7; }
+#rotate-hint { background: var(--stroke-b) center / 100% 100% no-repeat; border: 0; color: var(--cream); padding: 10px 44px 11px 34px; }
+#mute-btn { background: none; border: 0; color: var(--ink); text-shadow: var(--halo); }
+
+/* 窄屏、矮屏 */
+#ui.narrow #quest { left: 10px; top: 10px; padding: 0; max-width: calc(var(--vw) * 62); }
+#ui.narrow #quest > .seal { left: 6px; top: 5px; width: 34px; height: 34px; font-size: 19px; }
+#ui.narrow #q-title { min-width: 0; font-size: 22px; padding: 8px 44px 10px 50px; }
+#ui.narrow #q-desc, #ui.narrow #q-extra { margin-left: 10px; }
+#ui.touch #purse { padding: 9px 32px 10px 24px; }
+
+/* 对白展开时，小地图让开 */
+#mini-wrap { transition: opacity 0.3s; }
+#hud:has(~ #dialogue:not(.hidden)) #mini-wrap { opacity: 0; pointer-events: none; }
+
+/* HUD 自成一层：其中压角的印章不得浮到大地图、面板之上 */
+#hud { isolation: isolate; }
+
+/* 留影模式的提示条（界面隐去时仍在） */
+#photo-tip { position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%); padding: 8px 22px; font-family: var(--kai); font-size: 15px; letter-spacing: 0.12em; color: #f3ead6; background: rgba(28, 24, 22, 0.62); border-radius: 3px; opacity: 0; pointer-events: none; transition: opacity 0.6s; z-index: 40; white-space: nowrap; }
+#photo-tip.show { opacity: 1; }
+
+/* ── 字与印的排布 ── */
+/* 卷首的印：跟着题名的实际高度走（各家行楷的字身不一样高），落在“圖”字之下，不压字 */
+#title .name .stamp { position: absolute; right: 0.07em; top: calc(100% + 0.03em); width: 0.5em; height: 0.5em; font-size: inherit; letter-spacing: 0; text-shadow: none; writing-mode: horizontal-tb; display: flex; flex-direction: column; align-items: center; justify-content: center; transform: rotate(-3deg); }
+#title .name .stamp span { display: block; font-family: var(--li); font-size: 0.2em; line-height: 1.04; }
+/* 题跋的小印：两字上下排 */
+#colophon .seal { writing-mode: horizontal-tb; display: flex; flex-direction: column; align-items: center; justify-content: center; width: 25px; height: 42px; font-size: 15px; letter-spacing: 0; }
+#colophon .seal span { display: block; line-height: 1.12; }
+/* 角色名竖排：三个字也排成一列，不折到第二列 */
+.role .rn { height: auto; min-height: 176px; white-space: nowrap; }
+#ui.narrow .role .rn { min-height: 0; }
+/* 任务说明：两行匀着断，不让最后一行只剩三四个字 */
+#q-desc, #q-extra { text-wrap: balance; }
+#q-desc { max-width: 420px; }
+.role .rd, .panel .note, #dialogue .txt { text-wrap: pretty; }
+/* 题名略收小，印章落在题名与“丝竹”一行之间，两头都不压 */
+#title .name { top: calc(var(--vh) * 6.5); font-size: min(calc(var(--vh) * 11.6), calc(var(--vw) * 10)); }
+#title .sub { top: calc(var(--vh) * 9.5); right: calc(calc(var(--vw) * 7) + min(calc(var(--vh) * 11.6), calc(var(--vw) * 10)) + 26px); }
