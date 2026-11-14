@@ -1,0 +1,100 @@
+/* ── 触屏操作 ── */
+.tbtn {
+  pointer-events: auto; width: 58px; height: 58px; border-radius: 50%; border: 1.5px solid var(--ink); background: rgba(236, 223, 194, 0.82);
+  font-family: var(--li); font-size: 26px; color: var(--ink); display: grid; place-items: center; padding: 0;
+  box-shadow: 0 3px 10px rgba(40, 28, 14, 0.25); touch-action: manipulation;
+}
+.tbtn:active { background: var(--ink); color: var(--paper); }
+#tbtns { position: absolute; right: 216px; top: 24px; display: flex; gap: 12px; }
+#tb-act {
+  position: absolute; right: 44px; bottom: 64px; width: 112px; height: 112px; font-size: 50px; background: rgba(178, 58, 44, 0.9);
+  color: #f8ecd6; border-color: #f1e0c0; box-shadow: 0 0 0 2px var(--seal-2), 0 6px 16px rgba(40, 28, 14, 0.35);
+}
+#tb-act:active { background: var(--seal-2); color: #fff; }
+#joy {
+  position: absolute; left: 0; top: 0; width: 150px; height: 150px; margin: -75px 0 0 -75px; border-radius: 50%;
+  border: 1.5px solid rgba(42, 33, 27, 0.55); background: rgba(236, 223, 194, 0.3); box-shadow: inset 0 0 0 8px rgba(236, 223, 194, 0.25);
+}
+#joy-knob { position: absolute; left: 50%; top: 50%; width: 62px; height: 62px; margin: -31px; border-radius: 50%; background: rgba(42, 33, 27, 0.7); box-shadow: 0 0 0 3px rgba(236, 223, 194, 0.7); }
+#joy-hint {
+  position: absolute; left: 56px; bottom: 60px; width: 150px; height: 150px; border-radius: 50%; border: 1.5px dashed rgba(42, 33, 27, 0.4);
+  display: grid; place-items: center; font-size: 17px; color: var(--ink-2); letter-spacing: 0.2em; background: rgba(236, 223, 194, 0.22);
+}
+#rotate-hint { position: absolute; left: 50%; top: 46%; transform: translate(-50%, -50%); padding: 8px 20px; font-size: 18px; letter-spacing: 0.15em; background: rgba(236, 223, 194, 0.9); border: 1px solid var(--ink-2); white-space: nowrap; }
+#decorbar .dbtns { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+#mute-btn { position: absolute; right: calc(var(--vw) * 7); bottom: calc(var(--vh) * 5); pointer-events: auto; cursor: pointer; font-size: 15px; letter-spacing: 0.15em; color: var(--ink-2); background: rgba(236, 223, 194, 0.6); border: 1px solid var(--ink-3); padding: 3px 12px; font-family: inherit; }
+
+#ui.touch #hints, #ui.touch #mini-key, #ui.touch #lockhint { display: none !important; }
+#ui.touch #mini-wrap { width: 164px; height: 164px; }
+#ui.touch #right { gap: 14px; }
+#ui.touch #prompt { bottom: calc(var(--vh) * 32); }
+#ui.touch #decorbar { bottom: 18px; min-width: 0; padding: 10px 16px; }
+#ui.touch #decorbar .dk { display: none; }
+#ui.touch #dialogue .next { display: none; }
+#ui.touch .btn.small { padding: 0.45em 0.9em; }
+#ui.touch #cross { opacity: 0.7; }
+#ui:not(.touch) #tbtns, #ui:not(.touch) #tb-act, #ui:not(.touch) #joy, #ui:not(.touch) #joy-hint, #ui:not(.touch) #rotate-hint { display: none !important; }
+
+/* ── 窄屏（竖持手机等） ── */
+#ui.narrow #quest { left: 12px; top: 12px; max-width: calc(var(--vw) * 56); padding: 8px 12px 8px 8px; }
+#ui.narrow #q-title { font-size: 23px; }
+#ui.narrow #q-desc { font-size: 15px; }
+#ui.narrow #right { right: 12px; top: 12px; }
+#ui.narrow #tbtns { right: 14px; top: auto; bottom: 200px; flex-direction: column; }
+#ui.narrow #tb-act { right: 22px; bottom: 40px; }
+#ui.narrow #banner { font-size: 52px; }
+#ui.narrow #roles .cards { grid-template-columns: repeat(2, 1fr); }
+#ui.narrow #roles .box { max-height: calc(var(--vh) * 92); overflow-y: auto; padding: 22px 18px; }
+#ui.narrow .role { min-height: 0; }
+#ui.narrow .role .rn { height: auto; writing-mode: horizontal-tb; font-size: 36px; }
+#ui.narrow .row { grid-template-columns: 1fr auto; }
+#ui.narrow .row .hv { text-align: right; }
+#ui.narrow .cards2 { grid-template-columns: 1fr; }
+#ui.narrow .panel { padding: 20px 18px 16px; }
+#ui.narrow #title .name { right: calc(var(--vw) * 5); }
+#ui.narrow #title .menu { left: calc(var(--vw) * 6); bottom: calc(var(--vh) * 9); }
+#ui.narrow #title .foot { display: none; }
+#ui.narrow #dialogue { padding: 16px 18px; gap: 14px; }
+#ui.narrow #dialogue .txt { font-size: 20px; }
+#ui.narrow #decorbar { width: calc(var(--vw) * 94); }
+#ui.narrow #joy-hint { left: 30px; bottom: 40px; }
+
+/* ── 矮屏（横持手机） ── */
+#ui.short #roles .box { max-height: calc(var(--vh) * 94); overflow-y: auto; padding: 20px 26px; }
+#ui.short .role { min-height: 236px; padding-top: 12px; }
+#ui.short .role .rn { height: 106px; font-size: 38px; }
+#ui.short #banner { top: calc(var(--vh) * 12); font-size: 60px; }
+#ui.short #intro .box { padding: 24px 40px 20px; }
+#ui.short #intro p { font-size: 20px; line-height: 1.7; margin-bottom: 8px; }
+#ui.short #dialogue { bottom: calc(var(--vh) * 4); min-height: 120px; }
+#ui.short #toasts { top: calc(var(--vh) * 30); }
+#ui.short #pause .keys { display: none; }
+#ui.short #pause .panel .btn { margin-top: 8px; }
+
+/* ── 跃 ── */
+#tb-jump { position: absolute; right: 176px; bottom: 54px; width: 78px; height: 78px; font-size: 34px; }
+#ui.narrow #tb-jump { right: 150px; bottom: 34px; }
+#ui:not(.touch) #tb-jump { display: none !important; }
+
+/* ── 原画分段图 ── */
+#bigmap .sheet .strip { display: flex; height: 100%; width: 100%; }
+#bigmap .sheet .strip img { flex: none; width: 8.33334%; height: 100%; display: block; pointer-events: none; }
+
+/* ── 环形互动菜单 ── */
+#pie { position: absolute; inset: 0; pointer-events: auto; background: radial-gradient(closest-side, rgba(70, 54, 38, 0.34), rgba(70, 54, 38, 0.12)); }
+#pie .hub { position: absolute; left: 50%; top: 47%; width: 0; height: 0; }
+#pie .core { position: absolute; left: -62px; top: -62px; width: 124px; height: 124px; border-radius: 50%; display: grid; place-items: center; text-align: center; background-color: var(--paper); background-image: var(--grain); border: 1.5px solid var(--ink); box-shadow: 0 0 0 5px rgba(236, 223, 194, 0.9), 0 0 0 6.5px var(--ink), 0 10px 26px rgba(40, 28, 14, 0.4); }
+#pie .core b { display: block; font-family: var(--xing); font-weight: normal; font-size: 30px; letter-spacing: 0.08em; line-height: 1.1; }
+#pie .core small { display: block; font-size: 13.5px; color: var(--ink-2); margin-top: 4px; padding: 0 8px; }
+#pie .opt { position: absolute; transform: translate(-50%, -50%); min-width: 112px; padding: 10px 18px; text-align: center; font-size: 22px; letter-spacing: 0.12em; background-color: var(--paper); background-image: var(--grain); border: 1.5px solid var(--ink); border-radius: 28px; cursor: pointer; box-shadow: 0 6px 16px rgba(40, 28, 14, 0.3); white-space: nowrap; transition: transform 0.12s, background-color 0.12s, color 0.12s; font-family: inherit; color: var(--ink); animation: pie-in 0.2s both; touch-action: manipulation; }
+#pie .opt:hover, #pie .opt:active { background-color: var(--seal); background-image: none; color: #f8ecd6; border-color: var(--seal-2); transform: translate(-50%, -50%) scale(1.07); }
+#pie .opt i { font-style: normal; font-family: Georgia, serif; font-size: 13px; opacity: 0.55; margin-right: 7px; }
+#ui.touch #pie .opt i { display: none; }
+#pie .line { position: absolute; left: 0; top: 0; height: 1.2px; background: rgba(42, 33, 27, 0.5); transform-origin: 0 50%; }
+@keyframes pie-in { from { opacity: 0; transform: translate(-50%, -50%) scale(0.6); } }
+
+/* ── 桌面：小地图移到左下，如雷达 ── */
+#ui:not(.touch) #right { display: contents; }
+#ui:not(.touch) #mini-wrap { position: absolute; left: 30px; bottom: 60px; }
+#ui:not(.touch) #purse { position: absolute; right: 26px; top: 22px; }
+#ui:not(.touch) #hints { left: 270px; right: 270px; }
