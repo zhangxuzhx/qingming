@@ -31,6 +31,14 @@ export const shared = {
   uStar: { value: 0 },
   // 入夜亮灯的人家占几成
   uNight: { value: 0 },
+  // 辅图（见 world.js 的 makeAux）：R 灯笼的光晕，G 墙根，B 树下
+  tAux: { value: null },
+  uAuxRect: { value: new THREE.Vector4(0, 0, 1, 1) },
+  uLamp: { value: 0 }, // 灯光映地的强弱（夜里才有）
+  uCloudSh: { value: 0.5 }, // 云影的深浅
+  uMist: { value: 0.2 }, // 贴地的雾
+  // 水上的波纹：x z 起点、起始时刻、强弱
+  uRip: { value: Array.from({ length: 6 }, () => new THREE.Vector4(0, 0, -100, 0)) },
   // 投影
   tShadow: { value: null },
   uShadowMat: { value: new THREE.Matrix4() },
@@ -99,6 +107,8 @@ const DAY = [
   { h: 22, ...NIGHT, night: 0.9 },
   { h: 24, ...NIGHT, night: 0.5 },
 ];
+// 钟点 → 灯光映地、云影深浅、贴地的雾
+const ATMOS = [[0, 1, 0.18, 0.28], [4, 1, 0.18, 0.34], [5.1, 0.6, 0.1, 0.55], [6.1, 0, 0.3, 0.6], [8, 0, 0.45, 0.2], [12, 0, 0.45, 0.04], [15.5, 0, 0.45, 0.05], [17.6, 0.3, 0.35, 0.28], [18.7, 0.95, 0.1, 0.4], [20, 1, 0.18, 0.3], [24, 1, 0.18, 0.28]];
 const post = { paper: new THREE.Vector3(1, 1, 1), ray: new THREE.Vector3(0.13, 0.11, 0.07), bloom: 0.3 };
 // 把光色设到某个钟点
 export function setDayTime(hour) {
@@ -134,6 +144,12 @@ export function setDayTime(hour) {
   shared.uDisc.value = L('disc');
   shared.uStar.value = L('star');
   shared.uNight.value = L('night');
+  let j = 0;
+  while (j < ATMOS.length - 2 && h >= ATMOS[j + 1][0]) j++;
+  const p = ATMOS[j], q = ATMOS[j + 1], u = Math.min(1, Math.max(0, (h - p[0]) / (q[0] - p[0])));
+  shared.uLamp.value = p[1] + (q[1] - p[1]) * u;
+  shared.uCloudSh.value = p[2] + (q[2] - p[2]) * u;
+  shared.uMist.value = p[3] + (q[3] - p[3]) * u;
 }
 
 // ───────────────────────── 活气 ─────────────────────────
@@ -282,6 +298,11 @@ uniform vec3 uShadeTint;
 uniform vec3 uSunCol;
 uniform vec3 uFogCol;
 uniform float uNight;
+uniform sampler2D tAux;
+uniform vec4 uAuxRect;
+uniform float uLamp;
+uniform float uCloudSh;
+uniform float uMist;
 uniform float uTime;
 uniform float uFogK;
 uniform vec3 uSun;
@@ -298,6 +319,9 @@ const float PIG = 0.8;
 vec3 applyFog(vec3 col){
   float fog = 1.0 - exp(-vZ*vZ*uFogK);
   fog *= mix(1.0, 0.55, smoothstep(3.0, 42.0, vWorld.y));
+  // 晨昏的低雾：贴着地面、水面的一层，浓淡不匀，随风慢慢挪
+  float mist = uMist * exp(-max(vWorld.y, 0.0) * 0.3) * (1.0 - exp(-vZ * 0.022)) * (0.45 + 1.1 * texture(tNoise, vWorld.xz * 0.0045 + uTime * vec2(0.0035, 0.0012)).g);
+  fog = 1.0 - (1.0 - fog) * (1.0 - clamp(mist, 0.0, 0.85));
   return mix(col, uFogCol, fog);
 }
 // 投影（0 受光 … 1 全在影中）
@@ -322,11 +346,19 @@ float shadowAt(vec3 wp, vec3 n){
 vec3 lightWash(vec3 col, vec3 n, float amount){
   float ndl = dot(n, uSun);
   float lit = smoothstep(-0.1, 0.35, ndl) * (1.0 - shadowAt(vWorld, n));
+  // 云影：大块的明暗慢慢从地上移过
+  lit *= 1.0 - uCloudSh * smoothstep(0.57, 0.74, texture(tNoise, vWorld.xz * 0.0021 + uTime * vec2(0.0016, 0.0007)).r);
   // 明暗交界不取齐整的一线：用世界空间的噪声揉碎，像一笔淡墨扫出来的影
   float nz = texture(tNoise, vObj.xz*0.21 + vObj.y*0.13).g;
   lit = smoothstep(0.2, 0.8, lit + (nz - 0.5) * 0.34 * (1.0 - abs(lit*2.0 - 1.0)));
   vec3 amb = uShadeTint * mix(vec3(0.9, 0.86, 0.8), vec3(1.07, 1.08, 1.1), n.y*0.5 + 0.5);
-  col *= mix(mix(vec3(1.0), amb, amount), mix(vec3(1.0), uSunCol, amount), lit);
+  vec3 L = mix(mix(vec3(1.0), amb, amount), mix(vec3(1.0), uSunCol, amount), lit);
+  // 夜里灯笼的光：暖色，映在近处的地面和墙上
+  if(uLamp > 0.01){
+    float g = texture(tAux, (vWorld.xz - uAuxRect.xy) / uAuxRect.zw).r;
+    L += vec3(1.0, 0.56, 0.24) * (g * uLamp * 0.85 * amount * (1.0 - smoothstep(3.0, 9.0, vWorld.y)));
+  }
+  col *= L;
   // 受光面随朝向略分深浅，显出体积
   col *= 1.0 - 0.13 * amount * lit * (1.0 - clamp(ndl, 0.0, 1.0));
   return col;
@@ -457,7 +489,9 @@ void main(){
   vec2 p = vWorld.xz;
   float sd = riverSD(p);
   if(sd < 0.0) discard;
-  vec4 sp = texture(tSplat, (p - uRect.xy) / uRect.zw);
+  // 路沿、田边不取直线：取样位置按噪声挪一点，边缘就有进有出
+  vec2 pw = p + (texture(tNoise, p * 0.085).rg - 0.5) * 2.4;
+  vec4 sp = texture(tSplat, (pw - uRect.xy) / uRect.zw);
   vec3 det = texture(tDetail, p * 0.085).rgb;
   float nz = texture(tNoise, p * 0.013).r;
   float nz2 = texture(tNoise, p * 0.11 + 0.3).g;
@@ -510,6 +544,14 @@ void main(){
     hgt -= joint * 0.02 * pave;
   }
   col *= mix(vec3(1.0), det, 0.95);
+  // 墙根、树下：常年不见日头的地方色深些、带点苔色，房子和树才像是长在地上的
+  vec4 aux = texture(tAux, (p - uAuxRect.xy) / uAuxRect.zw);
+  float wallAO = smoothstep(0.04, 0.75, aux.g);
+  col *= 1.0 - 0.3 * wallAO;
+  col = mix(col, col * vec3(0.86, 0.93, 0.8), wallAO * 0.5 * (1.0 - sp.r));
+  col *= 1.0 - 0.17 * aux.b * (0.6 + 0.8 * nz3);
+  // 水边一线是湿的
+  col *= 1.0 - 0.22 * (1.0 - smoothstep(0.0, 0.8, sd));
   float bank = 1.0 - smoothstep(0.0, 4.5, sd);
   col *= 1.0 - 0.24 * bank * (0.5 + nz2);
   vec3 nl = perturb(vWorld, vec3(0.0, 1.0, 0.0), hgt * (1.0 - smoothstep(20.0, 60.0, vZ)));
@@ -528,6 +570,7 @@ ${SKY_GLSL}
 uniform sampler2D tRefl;
 uniform mat4 uReflMat;
 uniform float uReflOn;
+uniform vec4 uRip[6];
 void main(){
   vec2 p = vWorld.xz;
   vec3 st = riverST(p);
@@ -565,6 +608,21 @@ void main(){
   float line = 1.0 - smoothstep(0.02, 0.03 + fwidth(w)*1.2, lv);
   line *= smoothstep(0.42, 0.66, texture(tNoise, vec2(sf*0.019 + 0.7, st.y*0.055 + 0.2)).r) * (1.0 - smoothstep(25.0, 140.0, vZ));
   col = mix(col, col * vec3(0.5, 0.56, 0.6), line * 0.4);
+  // 岸边一线白水
+  float edgeN = texture(tNoise, vec2(sf * 0.09, st.y * 0.6) + uTime * 0.02).b;
+  col = mix(col, vec3(1.0, 1.01, 0.98), smoothstep(-0.5 - edgeN * 0.5, -0.04, riverSD(p)) * 0.3);
+  // 涉水荡开的波纹：两三道细细的墨圈往外走，越走越淡（和水面上别的水纹一个笔调）
+  float rip = 0.0;
+  for(int i = 0; i < 6; i++){
+    vec4 rr = uRip[i];
+    float age = uTime - rr.z;
+    if(rr.w <= 0.0 || age < 0.0 || age > 6.0) continue;
+    float d = distance(p, rr.xy), front = 0.3 + age * 1.4;
+    float env = exp(-abs(d - front) * 1.1) * exp(-age * 0.6) * rr.w * smoothstep(0.0, 0.2, age);
+    float ph = (d - front) * 3.4;
+    rip += env * (1.0 - smoothstep(0.1, 0.1 + fwidth(ph) * 1.5 + 0.12, abs(sin(ph))));
+  }
+  col = mix(col, col * vec3(0.52, 0.58, 0.62), clamp(rip, 0.0, 1.0) * 0.5);
   float sh = shadowAt(vWorld, vec3(0.0, 1.0, 0.0));
   col *= mix(vec3(1.0), uShadeTint * 1.12, sh * 0.6);
   col += uSunCol * glit * 0.9 * (1.0 - sh);
@@ -590,6 +648,11 @@ const common = () => ({
   uWaterY: shared.uWaterY,
   uShadeTint: shared.uShadeTint,
   uNight: shared.uNight,
+  tAux: shared.tAux,
+  uAuxRect: shared.uAuxRect,
+  uLamp: shared.uLamp,
+  uCloudSh: shared.uCloudSh,
+  uMist: shared.uMist,
 });
 const skyUniforms = () => ({
   uSkyHor: shared.uSkyHor,
@@ -657,7 +720,12 @@ function specialMat(fs, uniforms) {
 }
 export const groundMat = (splat, detail, rect) =>
   specialMat(FS_GROUND, { tSplat: { value: splat }, tDetail: { value: detail }, uRect: { value: new THREE.Vector4(...rect) } });
-export const waterMat = () => specialMat(FS_WATER, { ...skyUniforms(), tRefl: shared.tRefl, uReflMat: shared.uReflMat, uReflOn: shared.uReflOn });
+export const waterMat = () => specialMat(FS_WATER, { ...skyUniforms(), tRefl: shared.tRefl, uReflMat: shared.uReflMat, uReflOn: shared.uReflOn, uRip: shared.uRip });
+// 在水面某处荡开一圈波纹（涉水、泅水时由游戏调用）
+let ripN = 0;
+export function addRipple(x, z, amp = 1) {
+  shared.uRip.value[ripN++ % 6].set(x, z, shared.uTime.value, amp);
+}
 
 // ───────────────────────── 后期 ─────────────────────────
 // 上纸：颜料落在纸上的那一步。景深要在这之前做（虚的是画上的景，纸纹不能跟着糊），所以单拎出来两处共用

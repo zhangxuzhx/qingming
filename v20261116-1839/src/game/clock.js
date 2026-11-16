@@ -32,8 +32,9 @@ export class Clock {
       const t1 = performance.now();
       const d = Date.parse(r.headers.get('date') || '');
       if (!d) throw new Error('no date');
-      // Date 只精确到秒（取中加半秒）；经缓存转手的再加上 Age；往返耗时折半
-      const server = d + 500 + (Number(r.headers.get('age')) || 0) * 1000 + (t1 - t0) / 2;
+      // Date 只精确到秒（取中加半秒）；往返耗时折半。
+      // 不加 Age：实测托管方（GitHub Pages 的边缘节点）即便是缓存命中的响应，Date 也是当下的时间，再加 Age 反而快出去几十秒
+      const server = d + 500 + (t1 - t0) / 2;
       this.offset = Math.round(server - Date.now());
       this.source = 'net';
     } catch {

@@ -8,7 +8,7 @@ import { ROAD_HW, EAST_Z, BRIDGE, bridgeWorld, bridgeProfile, MOAT_BRIDGE, GATE,
 import * as P from './parts.js';
 import { buildObject } from '../engine/batch.js';
 import { figure, randomLook, ROBES } from './figures.js';
-import { buildScenery, groundCover } from './scenery.js';
+import { buildScenery, groundCover, greenery } from './scenery.js';
 import { FACE, paintLandscape, paintCalligraphy } from '../engine/textures.js';
 
 const PI = Math.PI;
@@ -29,6 +29,7 @@ export function buildSections(c) {
   city(c);
   buildScenery(c);
   backdrop(c);
+  greenery(c);
   groundCover(c);
 }
 
@@ -83,7 +84,7 @@ function rural(c) {
   // 卷首：薄雾疏林，一道小溪自北而南，溪上一座小板桥；驮炭的驴队正过桥往城里去
   plankBridge(c);
   for (const [x, dz] of [[396.5, -1.2], [392.6, -1.6], [388.4, -1.0], [374.2, 0.2], [370.4, -0.4]]) {
-    const dz2 = PLANK.z - 0.85 + dz * 0.15;
+    const dz2 = PLANK.z - 0.85 + dz * 0.15 - (x > 386 ? 0.95 : 0);
     c.at(x, dz2, PI + rng.f(-0.1, 0.1), () => P.donkey(b, [0.34, 0.33, 0.32]));
     colliders.add(x - 0.9, dz2 - 0.5, x + 0.9, dz2 + 0.5);
   }
@@ -93,6 +94,7 @@ function rural(c) {
     P.basket(b, 0, 0, 0, 1.2, [0.36, 0.35, 0.34]);
     P.basket(b, -0.75, 0, 0.2, 1.2, [0.86, 0.8, 0.62]);
   });
+  colliders.add(363.6, -40.1, 365.3, -39.0, -1e9, 0.9);
   c.criers.push({ x: 366.6, z: -38.6, lines: ['上好的木炭——', '带泥的春笋，今晨才掘的！'] });
   // 掩在高树间的几座茅舍，当中一片打麦场，场上搁着石碾
   cot(350, -66, 0); cot(337, -70, 0, 11, 7.4); cot(326, -58, PI / 2, 9, 6.6); cot(352, -52, -PI / 2, 9, 6.4);
@@ -145,6 +147,7 @@ function rural(c) {
   // 路边茅檐茶棚，棚下有人歇脚张望；棚边卧着两三头牛
   c.houseAt(220, zEN(8) - 2, 0, { w: 13, d: 8, h: 3.2, kind: 'tea', roofMat: 'thatch', wall: 'earth', base: 0.14, tint: W_.dark, awning: 2.6 });
   c.at(227.6, EAST_Z - ROAD_HW - 1.2, PI / 2, () => P.banner(b, c.atlas, '茶', 0, 0, 0, { h: 5.4 }));
+  colliders.add(227.6 - 0.13, (EAST_Z - ROAD_HW - 1.2) - 0.13, 227.6 + 0.13, (EAST_Z - ROAD_HW - 1.2) + 0.13);
   for (const [x, z, r] of [[231.5, -50, 0.6], [235.4, -53.4, 2.2], [229.6, -55.6, -0.5]]) {
     c.at(x, z, r, () => P.ox(b));
     colliders.add(x - 1.3, z - 1.3, x + 1.3, z + 1.3);
@@ -203,7 +206,7 @@ function docks(c) {
   c.row('S', 146, 108, { z: EAST_Z, dMax: 9.6, kinds: ['tea', 'shop', 'store', 'tea'], thatch: 0.12 });
   c.row('S', 96, 62, { z: EAST_Z, dMax: 9.6, kinds: ['tea', 'shop', 'tea'], thatch: 0.12 });
   // 泊船：大漕船一条挨一条靠在土岸边，有的并排两层；没有栈桥，搭跳板上下
-  const moor = [[190, 3.6, 0.2, 28], [161, 3.2, 0.06, 30], [162, 11.4, 0.08, 27], [129, 3.4, -0.1, 28], [100, 3.4, 0.12, 30], [99, 11.6, 0.14, 26], [70, 4.0, -0.06, 28], [44, 7.4, 0.34, 26]];
+  const moor = [[190, 5.0, 0.12, 28], [161, 3.2, 0.06, 30], [162, 11.4, 0.08, 27], [129, 3.4, -0.1, 28], [100, 3.4, 0.12, 30], [99, 11.6, 0.14, 26], [70, 4.0, -0.06, 28], [44, 7.4, 0.34, 26]];
   for (const [x, z, rot, L] of moor) addBoat(c, x, BANK + z, rot, { mast: rng.chance(0.6) ? 'up' : 'none', L, B: 6.4 });
   c.at(0, 0, 0, () => {
     for (const [x, z] of [[186, 3.6], [158, 3.2], [126, 3.4], [97, 3.4], [68, 4]]) b.beam('wood', [x, 0.06, BANK - 1.6], [x + 0.4, -0.2, BANK + z - 2.2], 0.7, 0.07, { color: W_.pale });
@@ -258,7 +261,7 @@ function bridge(c) {
     c.at(x, z, A + (sd > 0 ? PI : 0), () => P.parasolStall(b, rng, { r: 1.25 }), y);
     const [px, pz] = bridgeWorld(s + sd * 0.5, t + sd * 0.45);
     c.person(px, pz, A + (sd > 0 ? PI : 0), { ...randomLook(rng, rng.pick(['man', 'woman', 'labor'])), prop: null, arms: 'tuck' }, y);
-    colliders.add(x - 0.8, z - 0.8, x + 0.8, z + 0.8);
+    colliders.add(x - 0.8, z - 0.8, x + 0.8, z + 0.8, y - 0.4, y + 2.6); // 桥面高，碰撞盒要跟着抬上去
     cries.push([x, z]);
   }
   c.criers.push({ x: cries[0][0], z: cries[0][1], lines: ['炊饼——热炊饼！', '香饮子，解渴的香饮子！'] }, { x: cries[5][0], z: cries[5][1], lines: ['果子！时新果子！', '刀剪——磨得快的刀剪！'] });
@@ -278,14 +281,14 @@ function bridge(c) {
   {
     const [x, z] = bridgeWorld(3.6, 1.2), y = bridgeProfile(3.6);
     c.at(x, z, A, () => P.sedan(b), y);
-    colliders.add(x - 1.6, z - 1.2, x + 1.6, z + 1.2);
+    colliders.add(x - 1.6, z - 1.2, x + 1.6, z + 1.2, y - 0.4, y + 2.4);
     for (const ds of [-1.95, 1.95]) {
       const [px, pz] = bridgeWorld(3.6 + ds, 1.2);
       c.person(px, pz, A - PI / 2, { ...randomLook(rng, 'labor'), prop: null, arms: 'down', hat: 'scarf' }, bridgeProfile(3.6 + ds));
     }
     const [hx, hz] = bridgeWorld(-4.6, -0.9);
     c.at(hx, hz, A + PI, () => { P.horse(b); b.place(-0.05, P.HORSE_SEAT, 0, PI / 2, () => figure(b, { robe: [0.74, 0.46, 0.42], trim: [0.5, 0.3, 0.28], face: FACE.man2, hat: 'official', arms: 'reach', pose: 'ride' })); }, bridgeProfile(-4.6));
-    colliders.add(hx - 1.2, hz - 1.2, hx + 1.2, hz + 1.2);
+    colliders.add(hx - 1.2, hz - 1.2, hx + 1.2, hz + 1.2, bridgeProfile(-4.6) - 0.4, bridgeProfile(-4.6) + 2.6);
     const [ax, az] = bridgeWorld(-1.6, 0.2), [bx, bz] = bridgeWorld(0.6, -0.4);
     c.person(ax, az, A + PI / 2, { ...randomLook(rng, 'labor'), prop: null, arms: 'hail' }, bridgeProfile(-1.6));
     c.person(bx, bz, A - PI / 2, { ...randomLook(rng, 'labor'), prop: null, arms: 'hail', hat: 'scarf' }, bridgeProfile(0.6));
@@ -295,7 +298,7 @@ function bridge(c) {
   addBoat(c, 16, 15.8, -PI / 3, { mast: 'down', L: 30, B: 6.8, crew: 6 });
   addBoat(c, -30.5, -43.5, -0.72, { mast: 'none', L: 27 });
   addBoat(c, -58, -56, -0.32, { mast: 'up', L: 26 });
-  addBoat(c, -98, -69, 0.5, { mast: 'none', L: 24, crew: 3 });
+  addBoat(c, -97.2, -70.4, 0.5, { mast: 'none', L: 24, crew: 3 });
   addBoat(c, -22, -64, 2.3, { small: true });
   // 两头桥堍：伞摊、柳树
   for (const [s, t] of [[44, 9], [42, -10], [-45, 10], [-42, -11], [52, -6]]) {
@@ -354,6 +357,8 @@ function outside(c) {
   register(hm, -56, ROAD_HW - 1.3, PI);
   c.at(-44.4, ROAD_HW + 0.4, PI / 2, () => P.banner(b, atlas, '十千脚店', 0, 0, 0, { h: 7.4, bw: 0.9, bh: 3.6 }));
   c.at(-67.4, ROAD_HW + 0.5, PI / 2, () => P.banner(b, atlas, '新酒', 0, 0, 0, { h: 6 }));
+  colliders.add(-67.4 - 0.13, (ROAD_HW + 0.5) - 0.13, -67.4 + 0.13, (ROAD_HW + 0.5) + 0.13);
+  colliders.add(-44.4 - 0.13, (ROAD_HW + 0.4) - 0.13, -44.4 + 0.13, (ROAD_HW + 0.4) + 0.13);
   c.at(-62.2, ROAD_HW + 1.0, 0, () => P.vSign(b, atlas, '天之美禄', 0, 2.0, 0, 2.5, PI));
   c.at(-49.8, ROAD_HW + 1.0, 0, () => P.vSign(b, atlas, '十千', 0, 1.7, 0, 1.8, PI));
   c.at(-47.6, ROAD_HW + 0.5, 0, () => { for (let i = 0; i < 6; i++) P.jar(b, (i % 3) * 0.6, 0, Math.floor(i / 3) * 0.6, 1.4, [0.66, 0.52, 0.42]); });
@@ -389,6 +394,7 @@ function outside(c) {
     P.wheel(b, 0, 0, -0.1, 0.7);
     b.pop();
   });
+  colliders.add(-122.3, 1.7, -120.9, 3.1, -1e9, 0.9);
   colliders.add(-117.4, -3.4, -115.2, -1.6);
   c.person(-115.2, -1.4, -2.2, { ...randomLook(rng, 'labor'), prop: null, arms: 'reach', hat: 'scarf', lean: 0.3 });
   c.person(-118.4, -3.6, 0.9, { ...randomLook(rng, 'labor'), prop: null, arms: 'reach', lean: 0.26 });
@@ -499,6 +505,7 @@ function gate(c) {
   // 税务所：紧挨城门里头的街北，门前堆着货包，税吏正验货
   const tx = c.houseAt(-285, zN(8), 0, { w: 11, d: 8, h: 3.8, base: 0.35, kind: 'shop', keeper: false, fronts: (n) => Array(n).fill('open') });
   c.at(-285, -ROAD_HW - 3.2, 0, () => P.table(b, 0, 0, 1.8, 0.8));
+  colliders.add(-285.95, -ROAD_HW - 3.65, -284.05, -ROAD_HW - 2.75, -1e9, 1.3);
   c.npcs.push({ id: 'tax', name: '税吏', title: '税务所', x: -285, z: -ROAD_HW - 4, y: tx.y0, yaw: 0, look: { robe: [0.66, 0.74, 0.8], face: FACE.man2, hat: 'official', arms: 'tuck' } });
   c.at(-280.4, -ROAD_HW + 0.6, 0, () => P.sackPile(b, 0, 0, rng, 10));
   colliders.add(-281.5, -ROAD_HW - 0.2, -279.3, -ROAD_HW + 1.3);
@@ -539,6 +546,8 @@ function city(c) {
   register(hm, ZDX, -ROAD_HW + 1.3, 0);
   c.at(ZDX + 14.6, -ROAD_HW - 0.4, PI / 2, () => P.banner(b, atlas, '孙羊店', 0, 0, 0, { h: 7.6, bw: 0.95, bh: 3.4 }));
   c.at(ZDX - 14.4, -ROAD_HW - 0.4, PI / 2, () => P.banner(b, atlas, '香醪', 0, 0, 0, { h: 6.4 }));
+  colliders.add((ZDX - 14.4) - 0.13, (-ROAD_HW - 0.4) - 0.13, (ZDX - 14.4) + 0.13, (-ROAD_HW - 0.4) + 0.13);
+  colliders.add((ZDX + 14.6) - 0.13, (-ROAD_HW - 0.4) - 0.13, (ZDX + 14.6) + 0.13, (-ROAD_HW - 0.4) + 0.13);
   c.at(ZDX - 5.2, -ROAD_HW - 1.0, 0, () => P.vSign(b, atlas, '正店', 0, 1.9, 0, 1.9, 0));
   c.at(ZDX + 5.2, -ROAD_HW - 1.0, 0, () => P.vSign(b, atlas, '孙羊', 0, 1.9, 0, 1.9, 0));
   c.at(ZDX + 9.6, -ROAD_HW - 0.9, 0, () => { for (let i = 0; i < 8; i++) P.jar(b, (i % 4) * 0.6, i > 3 ? 0.66 : 0, 0, 1.4, [0.66, 0.52, 0.42]); });
@@ -631,7 +640,7 @@ function city(c) {
   colliders.add(CX + 4.1, -37.1, CX + 5.1, -34.9);
   c.rowNS('E', CX, -90, -43);
   c.rowNS('W', CX, -90, -53);
-  c.rowNS('W', CX, -39, -22);
+  c.rowNS('W', CX, -34.5, -22);
   c.rowNS('W', CX, 22, 58);
   c.rowNS('E', CX, 24, 58);
   // 甜水巷南侧与沈宅左右的人家
@@ -842,7 +851,7 @@ function backdrop(c) {
     for (let i = 0; i < n; i++) {
       const x = rng.f(x0, x1), z = rng.f(z0, z1);
       if (riverSD(x, z) < 3 || onRoad(x, z, 3)) continue;
-      if (rng.chance(0.14) && Math.abs(x - GATE.x) > 20) c.houseAt(x, z, rng.pick([0, PI]), { w: rng.f(9, 12), d: rng.f(7, 9), h: 3.3, kind: 'house', roofMat: rng.chance(0.5) ? 'thatch' : 'tile', tint: W_.dark, wall: 'earth' });
+      if (rng.chance(0.14) && Math.abs(x - GATE.x) > 20 && !colliders.hit(x, z, 9)) c.houseAt(x, z, rng.pick([0, PI]), { w: rng.f(9, 12), d: rng.f(7, 9), h: 3.3, kind: 'house', roofMat: rng.chance(0.5) ? 'thatch' : 'tile', tint: W_.dark, wall: 'earth' });
       else c.treeAt(x, z, rng.pick(['leaf', 'dark', 'willow', 'leaf']), rng.f(1.2, 1.7), false);
     }
   };
