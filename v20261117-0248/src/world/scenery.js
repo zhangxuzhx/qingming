@@ -256,7 +256,9 @@ function springCountry(c) {
 // ───────────────────────── 隋堤烟柳：汴河南岸的柳堤 ─────────────────────────
 function dyke(c) {
   const { b, rng, W_, atlas } = c;
-  // 沿堤：靠水一侧桃柳相间，靠里一侧疏疏几株杂树
+  // 沿堤：靠水一侧桃柳相间，靠里一侧疏疏几株杂树。水榭、堤尾茅亭的位置要让开（亭子是后盖的，先种的树会长进亭里）
+  const clearOf = (x, z) => Math.hypot(x - 96, z - 43.4) > 5.8 && Math.hypot(x - 258.5, z - 78) > 4.6;
+  const plant = (x, z, type, sc) => clearOf(x, z) && c.treeAt(x, z, type, sc);
   let k = 0;
   for (let i = 0; i < DYKE.length - 1; i++) {
     const [ax, az] = DYKE[i], [bx, bz] = DYKE[i + 1], len = Math.hypot(bx - ax, bz - az), ux = (bx - ax) / len, uz = (bz - az) / len;
@@ -266,9 +268,9 @@ function dyke(c) {
       let nx = uz, nz = -ux;
       if (riverSD(px + nx * 4, pz + nz * 4) > riverSD(px - nx * 4, pz - nz * 4)) { nx = -nx; nz = -nz; }
       const off = rng.f(3.4, 4.6);
-      if (k % 2) c.treeAt(px + nx * off, pz + nz * off, 'blossom', rng.f(1.7, 2.1));
-      else c.treeAt(px + nx * off, pz + nz * off, 'willow', rng.f(1.3, 1.6));
-      if (k % 3 === 0) c.treeAt(px - nx * rng.f(4.5, 8), pz - nz * rng.f(4.5, 8) + rng.f(-2, 2), rng.pick(['leaf', 'dark', 'blossom']), rng.f(1.2, 1.6));
+      if (k % 2) plant(px + nx * off, pz + nz * off, 'blossom', rng.f(1.7, 2.1));
+      else plant(px + nx * off, pz + nz * off, 'willow', rng.f(1.3, 1.6));
+      if (k % 3 === 0) plant(px - nx * rng.f(4.5, 8), pz - nz * rng.f(4.5, 8) + rng.f(-2, 2), rng.pick(['leaf', 'dark', 'blossom']), rng.f(1.2, 1.6));
     }
   }
   // 水榭：伸到岸边的一座亭子，隔河正对码头

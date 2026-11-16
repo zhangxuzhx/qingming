@@ -3,13 +3,14 @@
 // → 城外街（十千脚店、车轮作坊路口、平桥）→ 城门 → 城内（孙羊正店、路口、赵太丞家卷尾）。
 // 方位以原画为准：画面上方为北（-Z），地标在街的哪一侧、路口的哪一角都逐一对过。
 import * as THREE from 'three';
-import { RV, riverSD, CHANNELS } from './river.js';
+import { RV, riverSD, riverHW, bankOf, CHANNELS } from './river.js';
 import { addBoatDeck, addGang, boatHalfBeam, boatDeckLocal, ROAD_HW, EAST_Z, BRIDGE, bridgeWorld, bridgeProfile, MOAT_BRIDGE, GATE, HOME, BOUNDS, PLANK, NODES, EDGES, EXTRA_ROADS, edgeWidth, onRoad, colliders, addDeck, register } from './layout.js';
 import * as P from './parts.js';
 import { terrainH } from './terrain.js';
 import { buildObject } from '../engine/batch.js';
 import { figure, randomLook, ROBES } from './figures.js';
 import { buildScenery, groundCover, greenery } from './scenery.js';
+import { riverTraffic } from './traffic.js';
 import { FACE, paintLandscape, paintCalligraphy } from '../engine/textures.js';
 
 const PI = Math.PI;
@@ -25,6 +26,7 @@ export function buildSections(c) {
   rural(c);
   docks(c);
   bridge(c);
+  riverTraffic(c);
   outside(c);
   gate(c);
   city(c);
@@ -164,6 +166,25 @@ function rural(c) {
 export function addBoat(c, x, z, rot, o = {}) {
   const { rng } = c;
   const L = o.small ? 8.5 : o.L || 28, B = o.small ? 2.1 : o.B || 6.4, Y = -0.75;
+  // 船身不能嵌在岸里：沿船舷一圈查过去，哪一处离岸壁不到一拃，就整条船朝河心挪开那么多（岸线是弯的，照直线估的泊位常常不准）
+  for (let it = 0; it < 5; it++) {
+    const co = Math.cos(rot), si = Math.sin(rot);
+    let worst = 0, gx = 0, gz = 0;
+    for (let k = 0; k <= 16; k++)
+      for (const sz of [-1, 1]) {
+        const t = -1 + k / 8, lx = (t * L) / 2, lz = sz * boatHalfBeam(B, t), px = x + lx * co + lz * si, pz = z - lx * si + lz * co;
+        const pen = riverSD(px, pz) - (bankOf(riverHW(px, pz)).foot - 0.25);
+        if (pen > worst) {
+          worst = pen;
+          gx = riverSD(px + 0.5, pz) - riverSD(px - 0.5, pz);
+          gz = riverSD(px, pz + 0.5) - riverSD(px, pz - 0.5);
+        }
+      }
+    if (worst <= 0) break;
+    const gl = Math.hypot(gx, gz) || 1;
+    x -= (gx / gl) * (worst + 0.04);
+    z -= (gz / gl) * (worst + 0.04);
+  }
   const crewAt = []; // 船上站着的人：[船身坐标 x, z, 脚底高]
   const grp = buildObject(c.mats, (bb) => {
     if (o.small) {
@@ -185,10 +206,15 @@ export function addBoat(c, x, z, rot, o = {}) {
       for (let i = 0; i < 4; i++) bb.place(-1 + i * 2.2, 0.2 + B * 0.37 + 0.4, rng.f(-0.5, 0.5), -PI / 2 + rng.f(-0.5, 0.5), () => figure(bb, { ...randomLook(rng, 'labor'), prop: null, arms: rng.pick(['reach', 'hail']), staticLegs: true }));
     }
   });
+  const ph = rng.f(6);
+  if (o.ghost) {
+    // 只走一遍随机数、不留下任何东西：这条船撤掉了，但后头整片场景的树、人、摊子都是顺着同一串随机数摆的，次序不能乱
+    grp.traverse((m) => m.geometry && m.geometry.dispose());
+    return null;
+  }
   grp.position.set(x, Y, z);
   grp.rotation.y = rot;
   c.scene.add(grp);
-  const ph = rng.f(6);
   c.dynamic.push((t) => {
     grp.position.y = Y + Math.sin(t * 0.9 + ph) * 0.045;
     grp.rotation.z = Math.sin(t * 0.7 + ph) * 0.011;
@@ -201,7 +227,7 @@ export function addBoat(c, x, z, rot, o = {}) {
     const [cx, cz] = W((lx0 + lx1) / 2, lz);
     colliders.addOBB(cx, cz, (lx1 - lx0) / 2, hz, rot, Y + y0, Y + y1);
   };
-  addBoatDeck(x, z, rot, L, B, Y);
+  const deck = addBoatDeck(x, z, rot, L, B, Y);
   // 船身：分八段，各段照那里的宽窄与甲板的高低——人在水里游不进去，站在甲板上不受它挡
   for (let k = 0; k < 8; k++) {
     const t0 = -1 + k / 4, t1 = t0 + 0.25, tn = Math.abs(t0) < Math.abs(t1) ? t0 : t1;
@@ -214,15 +240,32 @@ export function addBoat(c, x, z, rot, o = {}) {
     if (o.cargo !== false) box(-L * 0.36 - 1.5, -L * 0.36 + 1.5, B * 0.25, 0.3, 1.3); // 船头的货堆
   }
   for (const [lx, lz, ly] of crewAt) box(lx - 0.24, lx + 0.24, 0.24, ly, ly + 1.7, lz);
+  return deck;
 }
 
 // ───────────────────────── 汴河码头（北岸） ─────────────────────────
-// 跳板：[起点 x, z（相对岸线）, 高, 终点 x, z, 高]。前六块自岸到船，后两块搭在并排的两条船之间
-const GANG_PLANKS = [
-  [186, -1.6, 0.06, 186.4, 2.9, -0.24], [158, -1.6, 0.06, 158.4, 1.1, -0.24], [126, -1.6, 0.06, 126.4, 1.3, -0.24],
-  [97, -1.6, 0.06, 97.4, 1.3, -0.24], [68, -1.6, 0.06, 68.4, 1.9, -0.24], [41, -1.6, 0.06, 42.2, 4.4, -0.2],
-  [166, 5.2, -0.2, 166.3, 9.6, -0.2], [104, 5.4, -0.2, 104.3, 9.8, -0.2],
-];
+// 船身坐标 → 世界（d 是 addBoat 返回的甲板记录）
+const onDeck = (d, lx, lz) => [d.x + lx * d.co + lz * d.si, d.z - lx * d.si + lz * d.co];
+// 自船头甲板后沿（篷舱前头）的舷边搭一块跳板上岸：返回 { 两头的位置与高, 船的哪一舷, 落在船身的哪儿 }；够不着岸则 null
+function gangToShore(d) {
+  const lx = -d.L * 0.12 - 1.2, t = (2 * lx) / d.L, hb = boatHalfBeam(d.B, t);
+  const a = onDeck(d, lx, hb + 2), b2 = onDeck(d, lx, -hb - 2), side = riverSD(a[0], a[1]) > riverSD(b2[0], b2[1]) ? 1 : -1;
+  for (let q = hb + 0.2; q < hb + 7.5; q += 0.15) {
+    const p = onDeck(d, lx, side * q);
+    if (riverSD(p[0], p[1]) > 1.2) {
+      const e = onDeck(d, lx, side * (hb - 0.6));
+      return { sx: p[0], sy: terrainH(p[0], p[1]) + 0.07, sz: p[1], ex: e[0], ey: d.y + boatDeckLocal(t) + 0.06, ez: e[1], side, lx };
+    }
+  }
+  return null;
+}
+// 并排泊着的两条船之间搭一块：自里头那条的外舷到外头那条的里舷
+function gangBetween(a, o, sideA) {
+  const lx = -a.L * 0.12 - 3.2, t = (2 * lx) / a.L, s = onDeck(a, lx, -sideA * (boatHalfBeam(a.B, t) - 0.6));
+  const dx = s[0] - o.x, dz = s[1] - o.z, lo = dx * o.co - dz * o.si, zo = dx * o.si + dz * o.co, to = (2 * lo) / o.L;
+  const e = onDeck(o, lo, Math.sign(zo) * (boatHalfBeam(o.B, to) - 0.6));
+  return { sx: s[0], sy: a.y + boatDeckLocal(t) + 0.06, sz: s[1], ex: e[0], ey: o.y + boatDeckLocal(to) + 0.06, ez: e[1] };
+}
 function docks(c) {
   const { b, rng, W_ } = c;
   const BANK = 18 - RV.HW; // 北岸岸线 z
@@ -232,30 +275,15 @@ function docks(c) {
   c.row('S', 146, 108, { z: EAST_Z, dMax: 9.6, kinds: ['tea', 'shop', 'store', 'tea'], thatch: 0.12 });
   c.row('S', 96, 62, { z: EAST_Z, dMax: 9.6, kinds: ['tea', 'shop', 'tea'], thatch: 0.12 });
   // 泊船：大漕船一条挨一条靠在土岸边，有的并排两层；没有栈桥，搭跳板上下
-  const moor = [[190, 5.0, 0.12, 28], [161, 3.2, 0.06, 30], [162, 11.4, 0.08, 27], [129, 3.4, -0.1, 28], [100, 3.4, 0.12, 30], [99, 11.6, 0.14, 26], [70, 4.0, -0.06, 28], [44, 7.4, 0.34, 26]];
-  for (const [x, z, rot, L] of moor) addBoat(c, x, BANK + z, rot, { mast: rng.chance(0.6) ? 'up' : 'none', L, B: 6.4 });
-  c.at(0, 0, 0, () => {
-    // 跳板：自岸上搭到各船的甲板；并排泊着的两条船之间也搭一块。都是真能走的（见 layout.js 的 addGang）
-    for (const [x0, z0, y0, x1, z1, y1] of GANG_PLANKS.map((g) => [g[0], BANK + g[1], g[2], g[3], BANK + g[4], g[5]])) {
-      b.beam('wood', [x0, y0, z0], [x1, y1, z1], 1.0, 0.07, { color: W_.pale });
-      for (const u of [0.25, 0.5, 0.75]) b.box('wood', x0 + (x1 - x0) * u, y0 + (y1 - y0) * u + 0.045, z0 + (z1 - z0) * u, 1.0, 0.03, 0.07, { color: W_.dark, lw: 0.4 }); // 防滑的横条
-      addGang(x0, y0 + 0.04, z0, x1, y1 + 0.04, z1, 0.55);
-    }
-  });
-  // 脚夫的路线：岸上货堆 → 跳板 → 船头货堆边（沿内舷走，不从船工中间穿）。每条船两人
-  for (const [k, bi, sx] of [[0, 0, 3.4], [1, 1, -3.2], [2, 3, 3], [3, 4, -3], [4, 6, 3.2]]) {
-    const g = GANG_PLANKS[k], [bx, bz, br, bL] = moor[bi], co = Math.cos(br), si = Math.sin(br);
-    const onBoat = (lx, lz) => [bx + lx * co + lz * si, BANK + bz - lx * si + lz * co];
-    const end = [g[3], BANK + g[4]], dx = end[0] - bx, dz = end[1] - (BANK + bz), lx0 = dx * co - dz * si;
-    for (const j of [0, 1])
-      c.porters.push([[g[0] + sx + j * 1.1, BANK - 4.6 - j * 0.8], [g[0], BANK - 2.4], [g[0], BANK + g[1]], end, onBoat(lx0 - 0.4, -2.55), onBoat(-bL * 0.36 + 2.3 + j * 0.9, -2.5)]);
-  }
+  // （岸线在一百五十步以东渐渐往南弯，各船的朝向顺着那一段岸；位置估个大概，addBoat 会把嵌进岸里的挪开）
+  const moor = [[190, 5.6, -0.08, 28], [161, 3.9, -0.03, 30], [162, 12.3, -0.02, 27], [129, 3.8, -0.04, 28], [100, 3.9, 0.05, 30], [99, 12.2, 0.07, 26], [70, 4.0, -0.06, 28], [44, 7.4, 0.34, 26]];
+  const moored = moor.map(([x, z, rot, L]) => addBoat(c, x, BANK + z, rot, { mast: rng.chance(0.6) ? 'up' : 'none', L, B: 6.4 }));
   // 河心：一条摇橹的，一条由岸上纤夫拉着逆水上行的
-  addBoat(c, 142, BANK + 27, 0.04, { mast: 'none', L: 26, crew: 5 });
+  addBoat(c, 142, BANK + 33, 0.04, { mast: 'none', L: 26, crew: 5 }); // 河心留给行船（见 traffic.js 的航线）
   addBoat(c, 74, BANK + 21, PI + 0.05, { mast: 'up', L: 27, crew: 3 });
   for (let i = 0; i < 6; i++) c.person(106 + i * 1.6, BANK - 2.4 - (i % 2) * 0.6, PI / 2, { ...randomLook(rng, 'labor'), prop: null, arms: 'reach', hat: rng.pick(['scarf', 'douli']), lean: 0.34 });
   c.at(0, 0, 0, () => b.rod('flat', [105, 1.25, BANK - 2.6], [79.4, 10.6, BANK + 21], 0.014, 0.014, 3, { color: [0.4, 0.36, 0.3], lw: 0.5 }));
-  addBoat(c, 226, BANK + 34, 0.5, { small: true });
+  addBoat(c, 222.1, BANK + 43.8, 0.5, { small: true });
   addBoat(c, 118, BANK + 36, -0.1, { small: true });
   // 纲船周老大在岸边点货
   c.npcs.push({ id: 'zhou', name: '周老大', title: '纲船船主', x: 150.6, z: BANK - 5.2, yaw: PI, look: { robe: [0.62, 0.7, 0.76], trim: [0.4, 0.45, 0.5], face: FACE.tanned, hat: 'scarf', arms: 'tuck', s: 1.03 } });
@@ -287,6 +315,46 @@ function docks(c) {
   // 岸柳与岸边的草
   for (let x = 206; x > 34; x -= rng.f(13, 20)) if (Math.abs(x - 152) > 8 && Math.abs(x - 102) > 8) c.treeAt(x, BANK - 1.4 - rng.f(0, 1.2), 'willow', rng.f(1.2, 1.6));
   c.criers.push({ x: 152, z: BANK - 3, lines: ['让一让！让一让！', '轻些放——那是蜀锦！', '嘿哟——嘿哟——'] }, { x: 100, z: BANK - 5, lines: ['江南新米到喽——', '当心脚下！'] });
+  // ── 跳板与脚夫（放在最后：岸上的货堆、人都摆好了，才知道哪儿走得通） ──
+  // 跳板自岸上搭到各船船头甲板的后沿；并排泊着的两条船之间也搭一块。都是真能走的（见 layout.js 的 addGang）
+  const gangs = [];
+  for (const i of [0, 1, 3, 4, 6, 7]) {
+    const g = gangToShore(moored[i]);
+    if (!g) continue;
+    gangs.push({ ...g, boat: moored[i] });
+    for (const [ia, io] of [[1, 2], [4, 5]]) if (ia === i) gangs.push(gangBetween(moored[ia], moored[io], g.side));
+  }
+  c.at(0, 0, 0, () => {
+    for (const g of gangs) {
+      const l = Math.hypot(g.ex - g.sx, g.ez - g.sz), nx = (-(g.ez - g.sz) / l) * 0.5, nz = ((g.ex - g.sx) / l) * 0.5;
+      b.beam('wood', [g.sx, g.sy, g.sz], [g.ex, g.ey, g.ez], 1.0, 0.07, { color: W_.pale });
+      for (const u of [0.2, 0.4, 0.6, 0.8]) {
+        const x = g.sx + (g.ex - g.sx) * u, y = g.sy + (g.ey - g.sy) * u + 0.045, z = g.sz + (g.ez - g.sz) * u;
+        b.beam('wood', [x - nx, y, z - nz], [x + nx, y, z + nz], 0.07, 0.03, { color: W_.dark, lw: 0.4 }); // 防滑的横条
+      }
+      addGang(g.sx, g.sy + 0.03, g.sz, g.ex, g.ey + 0.03, g.ez, 0.55);
+    }
+  });
+  // 脚夫：岸上找一处落脚（没东西挡、到板头走得通）→ 板头 → 跳板 → 船头甲板的舷边 → 船头货堆旁。每块上岸的跳板两人
+  for (const g of gangs) {
+    if (!g.boat) continue;
+    const d = g.boat, l = Math.hypot(g.sx - g.ex, g.sz - g.ez), ux = (g.sx - g.ex) / l, uz = (g.sz - g.ez) / l; // 自船指向岸
+    const head = [g.sx + ux * 0.9, g.sz + uz * 0.9];
+    for (let j = 0; j < 2; j++) {
+      let land = null;
+      for (let tries = 0; tries < 200 && !land; tries++) {
+        const a = rng.f(-1.3, 1.3), r = rng.f(2.4, 7), ca = Math.cos(a), sa = Math.sin(a);
+        const x = head[0] + (ux * ca - uz * sa) * r, z = head[1] + (uz * ca + ux * sa) * r;
+        if (riverSD(x, z) < 1.6 || colliders.hit(x, z, 0.6, 0)) continue;
+        let ok = true;
+        for (let q = 0; q <= 1.001 && ok; q += 0.08) if (colliders.hit(x + (head[0] - x) * q, z + (head[1] - z) * q, 0.42, 0)) ok = false;
+        if (ok) land = [x, z];
+      }
+      if (!land) continue;
+      const t1 = (2 * (g.lx - 1.6)) / d.L, lx2 = -d.L * 0.36 + 2.4 + j * 0.9, t2 = (2 * lx2) / d.L;
+      c.porters.push([land, head, [g.sx, g.sz], [g.ex, g.ez], onDeck(d, g.lx - 1.6, g.side * (boatHalfBeam(d.B, t1) - 0.62)), onDeck(d, lx2, g.side * (boatHalfBeam(d.B, t2) - 0.62))]);
+    }
+  }
 }
 
 // ───────────────────────── 虹桥 ─────────────────────────
@@ -333,12 +401,14 @@ function bridge(c) {
     c.person(ax, az, A + PI / 2, { ...randomLook(rng, 'labor'), prop: null, arms: 'hail' }, bridgeProfile(-1.6));
     c.person(bx, bz, A - PI / 2, { ...randomLook(rng, 'labor'), prop: null, arms: 'hail', hat: 'scarf' }, bridgeProfile(0.6));
   }
-  c.criers.push({ x: BRIDGE.xc, z: BRIDGE.zc, lines: ['快放桅！要撞上了！', '往左！往左撑！', '让轿！让轿！', '好险——'] });
-  // 桥下：一条大船正放倒桅杆抢过桥洞；桥北还有几条靠岸的
-  addBoat(c, 16, 15.8, -PI / 3, { mast: 'down', L: 30, B: 6.8, crew: 6 });
-  addBoat(c, -30.5, -43.5, -0.72, { mast: 'none', L: 27 });
+  // 桥上的吆喝：平时是轿马相争；有船过桥时（traffic.js 里换词）满桥的人都冲着船喊
+  c.bridgeCrier = { x: BRIDGE.xc, z: BRIDGE.zc, lines: ['让轿！让轿！', '借过——借过——'] };
+  c.criers.push(c.bridgeCrier);
+  // 桥下那条放倒桅杆抢过桥洞的大船，如今是真在走的（traffic.js）；桥北还有几条靠岸的
+  addBoat(c, 16, 15.8, -PI / 3, { mast: 'down', L: 30, B: 6.8, crew: 6, ghost: true });
+  addBoat(c, -34, -40.1, -0.72, { mast: 'none', L: 27 }); // 靠西岸泊，河心留给行船
   addBoat(c, -58, -56, -0.32, { mast: 'up', L: 26 });
-  addBoat(c, -97.2, -70.4, 0.5, { mast: 'none', L: 24, crew: 3 });
+  addBoat(c, -97.6, -67.7, -0.5, { mast: 'none', L: 24, crew: 3 }); // 顺着河身靠岸（原先几乎横在河道上）
   addBoat(c, -22, -64, 2.3, { small: true });
   // 两头桥堍：伞摊、柳树
   for (const [s, t] of [[44, 9], [42, -10], [-45, 10], [-42, -11], [52, -6]]) {
@@ -888,12 +958,16 @@ function backdrop(c) {
   }
   // 界外远景（不可达）
   const far = (n, x0, x1, z0, z1) => {
+    const trees = [];
     for (let i = 0; i < n; i++) {
       const x = rng.f(x0, x1), z = rng.f(z0, z1);
       if (riverSD(x, z) < 3 || onRoad(x, z, 3)) continue;
-      if (rng.chance(0.14) && Math.abs(x - GATE.x) > 20 && !colliders.hit(x, z, 9)) c.houseAt(x, z, rng.pick([0, PI]), { w: rng.f(9, 12), d: rng.f(7, 9), h: 3.3, kind: 'house', roofMat: rng.chance(0.5) ? 'thatch' : 'tile', tint: W_.dark, wall: 'earth' });
-      else c.treeAt(x, z, rng.pick(['leaf', 'dark', 'willow', 'leaf']), rng.f(1.2, 1.7), false);
+      // （房角离水要有十来步：照中心量的三步不够，屋子有六步宽）
+      if (rng.chance(0.14) && Math.abs(x - GATE.x) > 20 && !colliders.hit(x, z, 9) && riverSD(x, z) > 10) c.houseAt(x, z, rng.pick([0, PI]), { w: rng.f(9, 12), d: rng.f(7, 9), h: 3.3, kind: 'house', roofMat: rng.chance(0.5) ? 'thatch' : 'tile', tint: W_.dark, wall: 'earth' });
+      else trees.push([x, z, rng.pick(['leaf', 'dark', 'willow', 'leaf']), rng.f(1.2, 1.7)]);
     }
+    // 屋都盖好了再种树：树不带碰撞体，先种的话后盖的屋会把它罩在里头
+    for (const [x, z, type, sc] of trees) if (!colliders.hit(x, z, 1.2)) c.treeAt(x, z, type, sc, false);
   };
   far(120, -450, 460, BOUNDS.minZ - 40, BOUNDS.minZ - 3);
   far(100, -450, 460, BOUNDS.maxZ + 3, BOUNDS.maxZ + 34);

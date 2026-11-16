@@ -335,6 +335,8 @@ function boot() {
   window.__qm = {
     game, ui, world, ink, scene, camera, photo, hotkey,
     clock,
+    // 调试：审查一遍摆放、穿模、碰撞（见 src/audit.js），返回问题清单
+    audit: async () => (await import('./audit.js')).audit(game, world, MAP),
     // 调试：把钟点定住。给钟点数（0~24）或 'morning' / 'noon' / 'dusk' / 'night'；不给参数则交还给联网时间
     time: (n) => {
       clock.fixed = n === undefined || n === null ? null : typeof n === 'number' ? n : { morning: 8, noon: 12, dusk: 17.6, night: 21 }[n] ?? 8;

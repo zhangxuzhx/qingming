@@ -56,6 +56,9 @@ export const shared = {
   uReflOn: { value: 0 },
   // 跨帧累积时整幅画面每帧的微移（裁剪坐标）；自己会动的东西在顶点着色器里把它减回去
   uJit: { value: new THREE.Vector2() },
+  // 行船的航迹：每条船的位置、朝向（弧度）、半长
+  uWake: { value: Array.from({ length: 5 }, () => new THREE.Vector4(1e5, 1e5, 0, 14)) },
+  uWakeK: { value: [1, 1, 1, 1, 1] }, // 各条航迹的浓淡（船隐入烟水时跟着淡掉）
   // 河道：到岸距离、流向、半宽（见 river.js）
   tRiver: { value: riverTexture() },
   uRiverRect: { value: new THREE.Vector4(RIVER_RECT.x0, RIVER_RECT.z0, RIVER_RECT.w, RIVER_RECT.h) },
@@ -421,6 +424,9 @@ uniform float uWash;
 uniform float uBump;
 uniform vec2 uFadeD;
 uniform vec2 uInkD;
+#ifdef VEIL
+uniform float uVeil;
+#endif
 void main(){
   if(uReflPass > 0.5 && vWorld.y < uWaterY - 0.04) discard;
   vec3 n = normalize(vNw);
@@ -445,6 +451,14 @@ void main(){
   // 远处的草丛一丛一丛地隐去（按世界里的格子取散列，镜头移动时不会忽隐忽现）：
   // 远了每丛只剩几个像素，留着只会随镜头移动闪个不停；地上那层草色照旧
   if(fract(sin(dot(floor(vObj.xz / 1.3), vec2(12.9898, 78.233))) * 43758.5453) < smoothstep(uFadeD.x, uFadeD.y, vZ)) discard;
+  #endif
+  #ifdef VEIL
+  // 隐入烟水（行船在河的尽头显出来、隐进去）：先是线淡了、颜色化进雾色，末了按屏幕上的网点一点点透掉
+  if(uVeil > 0.0){
+    ivec2 vc = ivec2(gl_FragCoord.xy) & 3;
+    const float BAY[16] = float[16](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
+    if((BAY[vc.y * 4 + vc.x] + 0.5) / 16.0 < smoothstep(0.4, 1.0, uVeil)) discard;
+  }
   #endif
   if(uShadowPass > 0.5){
     gColor = vec4(1.0);
@@ -526,6 +540,9 @@ void main(){
   col *= uFogCol / vec3(1.085, 1.06, 1.015);
   #endif
   if(uGhost > 0.5) col = mix(col, uGhost > 1.5 ? vec3(0.9,0.4,0.32) : vec3(0.6,0.85,0.55), 0.4);
+  #ifdef VEIL
+  col = mix(col, uFogCol, smoothstep(0.0, 0.75, uVeil));
+  #endif
   // 透明度一栏留给跨帧累积：0 = 自己会动的，不累积；其余 = 1 − 0.9×随风摆动的幅度（据此推算上一帧它在哪儿）
   // （画倒影那一遍例外：水面拿透明度当“这里有没有倒影”用，照旧写 1）
   #ifdef DYN
@@ -544,6 +561,9 @@ void main(){
   #ifdef INKFADE
   // 细碎的东西远了不勾线
   lw *= 1.0 - smoothstep(uInkD.x, uInkD.y, vZ);
+  #endif
+  #ifdef VEIL
+  lw *= 1.0 - smoothstep(0.0, 0.5, uVeil);
   #endif
   gNormal = vec4(nv.xy*0.5+0.5, lw, vInk.x);
   #endif
@@ -678,6 +698,8 @@ uniform sampler2D tRefl;
 uniform mat4 uReflMat;
 uniform float uReflOn;
 uniform vec4 uRip[6];
+uniform vec4 uWake[5];
+uniform float uWakeK[5];
 void main(){
   vec2 p = vWorld.xz;
   vec3 st = riverST(p);
@@ -734,6 +756,35 @@ void main(){
     rip += env * (1.0 - smoothstep(0.1, 0.1 + fwidth(ph) * 1.5 + 0.12, abs(sin(ph))));
   }
   col = mix(col, col * vec3(0.52, 0.58, 0.62), clamp(rip, 0.0, 1.0) * 0.5);
+  // 行船的航迹：船头分开两道浪（浪头一线亮、外沿一道墨线），船尾又拖出两道，当中夹着一带搅白的水和一道道往后弯的横纹；越往后越开、越淡
+  float wk = 0.0, wash = 0.0;
+  float wpx = (fwidth(p.x) + fwidth(p.y)) * 0.9; // 这一处一个像素合多少米（线再细也不细过它）
+  float wtx = smoothstep(0.3, 0.62, texture(tNoise, p * 0.13 + vec2(uTime * 0.01, 0.0)).r); // 取样放在循环外头：循环里取不到可靠的导数
+  for(int i = 0; i < 5; i++){
+    vec4 wb = uWake[i];
+    vec2 d = p - wb.xy;
+    if(abs(d.x) + abs(d.y) > 120.0) continue;
+    vec2 dir = vec2(-cos(wb.z), sin(wb.z));
+    float a = dot(d, dir), c = abs(d.x * dir.y - d.y * dir.x);
+    float u = wb.w - a; // 自船头往后多远
+    if(u < -1.0 || u > 90.0) continue;
+    float wob = sin(u * 0.5 + n1 * 5.0) * 0.22 + sin(u * 1.9 + c) * 0.06;
+    float us = u - 2.0 * wb.w + 2.0; // 自船尾往后多远
+    float l1 = c - (0.6 + u * 0.34) + wob;
+    float f1 = smoothstep(-0.5, 2.5, u) * (1.0 - smoothstep(20.0, 70.0, u)) * uWakeK[i];
+    wk += (1.0 - smoothstep(0.1, 0.2 + wpx, abs(l1 - 0.5))) * f1;
+    wk += (1.0 - smoothstep(0.07, 0.14 + wpx, abs(l1 + 0.85))) * f1 * 0.5 * smoothstep(6.0, 12.0, u);
+    wash += exp(-l1 * l1 * 5.0) * f1 * 0.75;
+    float l2 = c - (1.3 + us * 0.2) + wob * 0.8;
+    float f2 = smoothstep(0.0, 2.0, us) * (1.0 - smoothstep(16.0, 56.0, us)) * uWakeK[i];
+    float inside = 1.0 - smoothstep(-0.6, -0.1, l2);
+    wk += (1.0 - smoothstep(0.09, 0.18 + wpx, abs(l2))) * f2 * 0.85;
+    float ch = us * 0.4 + c * c * 0.06 + n1 * 1.5;
+    wk += (1.0 - smoothstep(0.04, 0.07 + wpx * 0.4, abs(fract(ch) - 0.5))) * f2 * inside * 0.55 * smoothstep(0.3, 0.6, n2);
+    wash += uWakeK[i] * smoothstep(0.0, 2.0, us) * (1.0 - smoothstep(4.0, 34.0, us)) * inside * wtx;
+  }
+  col = mix(col, col * vec3(0.4, 0.47, 0.53), clamp(wk, 0.0, 1.0) * 0.72);
+  col = mix(col, vec3(0.95, 0.97, 0.95), clamp(wash, 0.0, 1.0) * 0.55);
   float sh = shadowAt(vWorld, vec3(0.0, 1.0, 0.0));
   col *= mix(vec3(1.0), uShadeTint * 1.12, sh * 0.6);
   col += uSunCol * glit * 0.9 * (1.0 - sh);
@@ -851,12 +902,30 @@ export function markDynamic(root) {
   return root;
 }
 
+// 给一件东西配上“隐入烟水”的开关：它的材质各换成自己的一份（带 VEIL 记号），共用返回的那个量——0 全显，1 全隐
+export function veiled(root) {
+  const u = { value: 0 }, own = new Map();
+  root.traverse((o) => {
+    const m = o.material;
+    if (!m || !m.isShaderMaterial || !m.uniforms || !m.uniforms.map) return;
+    let d = own.get(m);
+    if (!d) {
+      d = cloneInk(m);
+      d.defines = { ...m.defines, VEIL: '' };
+      d.uniforms.uVeil = u;
+      own.set(m, d);
+    }
+    o.material = d;
+  });
+  return u;
+}
+
 function specialMat(fs, uniforms) {
   return new THREE.ShaderMaterial({ glslVersion: THREE.GLSL3, uniforms: { ...common(), tRiver: shared.tRiver, uRiverRect: shared.uRiverRect, ...uniforms }, vertexShader: VS, fragmentShader: fs });
 }
 export const groundMat = (splat, detail, rect) =>
   specialMat(FS_GROUND, { tSplat: { value: splat }, tDetail: { value: detail }, uRect: { value: new THREE.Vector4(...rect) } });
-export const waterMat = () => specialMat(FS_WATER, { ...skyUniforms(), tRefl: shared.tRefl, uReflMat: shared.uReflMat, uReflOn: shared.uReflOn, uRip: shared.uRip });
+export const waterMat = () => specialMat(FS_WATER, { ...skyUniforms(), tRefl: shared.tRefl, uReflMat: shared.uReflMat, uReflOn: shared.uReflOn, uRip: shared.uRip, uWake: shared.uWake, uWakeK: shared.uWakeK });
 // 在水面某处荡开一圈波纹（涉水、泅水时由游戏调用）
 let ripN = 0;
 export function addRipple(x, z, amp = 1) {

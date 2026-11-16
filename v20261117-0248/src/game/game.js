@@ -8,6 +8,7 @@ import { HOME, GATE, NODES, POIS, poi, route, nearestNode, groundY, blocked, inR
 import { mainRiverSD, riverSD, riverHW, bankOf, bankHeight, RV } from '../world/river.js';
 import { terrainH } from '../world/terrain.js';
 import { addRipple, markDynamic } from '../engine/ink.js';
+import { shove } from '../world/traffic.js';
 import { RNG, mulberry32, clamp, angDiff } from '../util.js';
 
 const SAVE_KEY = 'qingming.save.v1';
@@ -734,7 +735,13 @@ export class Game {
     else if (ez > 1e-5 && clear(p.x + ez, nz)) (p.z = nz), (p.x += ez);
     else if (ez > 1e-5 && clear(p.x - ez, nz)) (p.z = nz), (p.x -= ez);
     else p.vz = 0;
-    if (blocked(p.x, p.z, 0.35, p.y)) {
+    // 行船开过来：把水里的人往旁边分开（挪过去的地方若有别的东西挡着就不挪，交给下面那一步）
+    const sv = shove(p.x, p.z, p.y);
+    if (sv && !blocked(sv[0], sv[1], 0.35, p.y, false)) {
+      p.x = sv[0];
+      p.z = sv[1];
+    }
+    if (blocked(p.x, p.z, 0.35, p.y, !sv)) {
       // 已经嵌在什么东西里了（比如从船边跳下水，正落在船身边上）：朝最近的空处挪出去，免得卡死
       out: for (const d of [0.2, 0.4, 0.7, 1.1, 1.6])
         for (let k = 0; k < 8; k++) {
@@ -1093,14 +1100,14 @@ export class Game {
       this.world.criers.forEach((c, i) => {
         this.crierT[i] += dt;
         const d = Math.hypot(c.x - p.x, c.z - p.z);
-        if (d > 17 || out.length >= 3) return;
+        if (d > (c.r || 17) || out.length >= 3) return;
         const cyc = this.crierT[i] % 7.5;
         if (cyc > 3.6) return;
         const line = c.lines[Math.floor(this.crierT[i] / 7.5) % c.lines.length];
-        const s = this.project(c.x, groundY(c.x, c.z) + 2.25, c.z);
+        const s = this.project(c.x, (c.y ?? groundY(c.x, c.z)) + 2.25, c.z);
         if (s.behind || s.x < 40 || s.x > innerWidth - 40 || s.y < 60) return;
         const fadeIn = Math.min(1, cyc / 0.4), fadeOut = Math.min(1, (3.6 - cyc) / 0.5);
-        out.push({ x: s.x, y: s.y, text: line, a: Math.min(fadeIn, fadeOut) * clamp(1.4 - d / 14, 0.25, 0.95) });
+        out.push({ x: s.x, y: s.y, text: line, a: Math.min(fadeIn, fadeOut) * clamp(1.4 - d / ((c.r || 17) * 0.82), 0.25, 0.95) });
       });
     }
     this.ui.bubbles(out);
