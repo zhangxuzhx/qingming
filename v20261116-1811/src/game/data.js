@@ -121,4 +121,4 @@ export const TALK = {
   ],
 };
 
-export const KEY_HINTS = 'W A S D 行走 · 鼠标环顾 · Shift 疾行 · 空格 跃 · V 换视角 · E 交谈 · M 画卷 · Tab 行囊 · B 布置（家中） · T 换时辰 · P 留影 · Esc 暂停';
+export const KEY_HINTS = 'W A S D 行走 · 鼠标环顾 · Shift 疾行 · 空格 跃 · V 换视角 · E 交谈 · M 画卷 · Tab 行囊 · B 布置（家中） · P 留影 · Esc 暂停';

@@ -1,7 +1,9 @@
 // 入口：研墨（生成贴图）→ 搭建汴京 → 卷首 → 入画
 import * as THREE from 'three';
 import { buildTextures } from './engine/textures.js';
-import { InkRenderer, shared, setTimeOfDay, TIMES } from './engine/ink.js';
+import { InkRenderer, shared, setDayTime } from './engine/ink.js';
+import { Clock } from './game/clock.js';
+import { installDebug } from './ui/debug.js';
 import { Sound } from './engine/audio.js';
 import { buildWorld, MAP } from './world/world.js';
 import { UI } from './ui/ui.js';
@@ -44,32 +46,19 @@ function boot() {
   addEventListener('orientationchange', () => setTimeout(resize, 250));
   resize();
 
-  // ── 时辰：上午 / 正午 / 黄昏 ──
-  const TIME_ORDER = ['morning', 'noon', 'dusk'];
-  let timeName = 'morning';
-  try {
-    const t = localStorage.getItem('qingming.time');
-    if (TIMES[t]) timeName = t;
-  } catch {
-    /* 无本地存储时用默认 */
-  }
-  setTimeOfDay(timeName);
-  const cycleTime = () => {
-    timeName = TIME_ORDER[(TIME_ORDER.indexOf(timeName) + 1) % TIME_ORDER.length];
-    const t = setTimeOfDay(timeName);
-    try {
-      localStorage.setItem('qingming.time', timeName);
-    } catch {
-      /* 存不了就算了 */
-    }
-    if (photo.on) tip('时辰 · ' + t.label);
-    else ui.toast('时辰 · ' + t.label);
-    sound.sfx('page');
-  };
+  // ── 时辰：一昼夜十二时辰，现实里三十分钟过完；现在是什么时辰看联网时间（离线看本机时间） ──
+  const clock = new Clock();
+  let shichenShown = '', nightShown = false;
+  setDayTime(clock.hour());
+  const resync = () => clock.sync();
+  resync();
+  setInterval(resync, 10 * 60 * 1000);
+  addEventListener('online', resync);
+  const debug = installDebug({ clock, stats: () => window.__qm && window.__qm.stats() });
 
   // ── 留影：隐去界面，镜头自由游走，回车存一张大图 ──
   const photo = { on: false, pos: new THREE.Vector3(), yaw: 0, pitch: 0, fov: 50, timer: 0, view: 'tp', focus: 9, dof: 1 };
-  const PHOTO_TIP = '留影 · W A S D 移动 · Q E 升降 · Shift 快些 · 滚轮 远近 · [ ] 调焦 · F 景深 · T 换时辰 · 回车 存图 · P 退出';
+  const PHOTO_TIP = '留影 · W A S D 移动 · Q E 升降 · Shift 快些 · 滚轮 远近 · [ ] 调焦 · F 景深 · 回车 存图 · P 退出';
   // 景深的几档：平时走路是淡淡的一层（远处渐虚）；留影时可调焦，分 关 / 淡 / 浓
   const DOF_PLAY = { focus: 9, aper: 3.2, tol: 0.6, nearTol: 3.2, nearK: 1.2 };
   const DOF_TITLE = { focus: 118, aper: 3, tol: 0.3, nearTol: 0.45, nearK: 1 };
@@ -129,12 +118,12 @@ function boot() {
     slow = -0.5; // 存图那一帧慢是应当的，不算掉帧
     sound.sfx('page');
   };
-  // 返回 true 表示这一键已被时辰 / 留影用掉
+  // 返回 true 表示这一键已被调试菜单 / 留影用掉
   const hotkey = (code) => {
+    if (debug.key(code)) return true;
     if (photo.on) {
       if (code === 'KeyP' || code === 'Escape') exitPhoto();
       else if (code === 'Enter' || code === 'NumpadEnter') savePhoto();
-      else if (code === 'KeyT') cycleTime();
       else if (code === 'BracketLeft' || code === 'BracketRight') {
         photo.focus = Math.max(1.2, Math.min(400, photo.focus * (code === 'BracketLeft' ? 0.88 : 1.14)));
         if (!photo.dof) photo.dof = 1;
@@ -146,7 +135,6 @@ function boot() {
       return true;
     }
     if (game.mode !== 'play' || ui.modal) return false;
-    if (code === 'KeyT') return cycleTime(), true;
     if (code === 'KeyP' && !game.decorMode) return enterPhoto(), true;
     return false;
   };
@@ -343,7 +331,12 @@ function boot() {
   // 调试钩子（控制台可用）
   window.__qm = {
     game, ui, world, ink, scene, camera, photo, hotkey,
-    time: (n) => setTimeOfDay(n),
+    clock,
+    // 调试：把钟点定住。给钟点数（0~24）或 'morning' / 'noon' / 'dusk' / 'night'；不给参数则交还给联网时间
+    time: (n) => {
+      clock.fixed = n === undefined || n === null ? null : typeof n === 'number' ? n : { morning: 8, noon: 12, dusk: 17.6, night: 21 }[n] ?? 8;
+      setDayTime(clock.hour());
+    },
     tp(x, z, yawDeg, pitchDeg = 0) {
       Object.assign(game.player, { x, z, vx: 0, vz: 0 });
       if (yawDeg !== undefined) game.player.yaw = (yawDeg * Math.PI) / 180;
@@ -413,6 +406,15 @@ function boot() {
       camera.lookAt(...dbg.target);
       camera.updateProjectionMatrix();
     }
+    // 时辰照联网时间走；界面上的时辰只在换了的时候改
+    const hour = clock.hour();
+    setDayTime(hour);
+    const sc = Clock.shichen(hour);
+    if (sc !== shichenShown) ui.setClock((shichenShown = sc));
+    // 天黑了，直接压在画面上的字要换成浅色
+    const dark = hour >= 18.5 || hour < 5.5;
+    if (dark !== nightShown) ui.root.classList.toggle('night', (nightShown = dark));
+    debug.update(raw);
     ui.updateDialogue(dt);
     if (game.mode !== 'play') sound.tick(0.25);
     const needHint = game.mode === 'play' && !ui.modal && !locked() && !ui.touch;
@@ -461,15 +463,24 @@ function boot() {
   };
 }
 
+// 招牌、字画是画在贴图上的，生成之前得先把随游戏带的字体载好；最多等 4 秒，载不下来就用系统字体顶上
+function fontsReady() {
+  if (!document.fonts || !document.fonts.load) return Promise.resolve();
+  const want = ['"QM Kai"', '"QM Brush"', '"QM Title"'].map((f) => document.fonts.load(`24px ${f}`, '清明上河圖汴京'));
+  return Promise.race([Promise.all(want), new Promise((r) => setTimeout(r, 4000))]).catch(() => {});
+}
+
 // 先让“研墨铺纸”显示出来，再开始生成
 setTimeout(() =>
-  setTimeout(() => {
-    try {
-      boot();
-    } catch (e) {
-      console.error(e);
-      const l = document.getElementById('loading');
-      if (l) l.textContent = '展卷未成：' + (e && e.message ? e.message : e);
-    }
-  }, 40)
+  fontsReady().then(() =>
+    setTimeout(() => {
+      try {
+        boot();
+      } catch (e) {
+        console.error(e);
+        const l = document.getElementById('loading');
+        if (l) l.textContent = '展卷未成：' + (e && e.message ? e.message : e);
+      }
+    }, 40)
+  )
 );

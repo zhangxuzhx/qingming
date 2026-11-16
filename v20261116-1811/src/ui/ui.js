@@ -33,8 +33,8 @@ export class UI {
         <div id="marker" class="hidden"><div class="seal m-seal"><span></span></div><div class="m-text"></div></div>
         <div id="quest"><div class="seal">任</div><div><div id="q-title"></div><div id="q-desc"></div><div id="q-extra"></div></div></div>
         <div id="right"><div id="mini-wrap" data-k="KeyM"><canvas id="minimap"></canvas><div id="mini-north" class="seal">北</div><div id="mini-key">M · 展开画卷</div></div>
-        <div id="purse"><span class="coin"></span><b id="money">0</b>文<span class="sep">｜</span>行囊 <span id="load">0/8</span></div></div>
-        <div id="tbtns"><button class="tbtn" data-k="KeyV">视</button><button class="tbtn" data-k="KeyT">时</button><button class="tbtn" data-k="KeyM">卷</button><button class="tbtn" data-k="Tab">囊</button><button class="tbtn" data-k="Escape">歇</button></div>
+        <div id="purse"><span id="shichen"></span><span class="sep">｜</span><span class="coin"></span><b id="money">0</b>文<span class="sep">｜</span>行囊 <span id="load">0/8</span></div></div>
+        <div id="tbtns"><button class="tbtn" data-k="KeyV">视</button><button class="tbtn" data-k="KeyM">卷</button><button class="tbtn" data-k="Tab">囊</button><button class="tbtn" data-k="Escape">歇</button></div>
         <button id="tb-jump" class="tbtn" data-k="Space">跃</button>
         <button id="tb-act" class="tbtn hidden" data-k="KeyE">谈</button>
         <div id="joy" class="hidden"><div id="joy-knob"></div></div>
@@ -124,6 +124,10 @@ export class UI {
       setTimeout(() => rh.classList.add('hidden'), 5000);
     } else if (!portrait) rh.classList.add('hidden');
   }
+  // 当前时辰（子丑寅卯……）
+  setClock(c) {
+    this.$('#shichen').textContent = c + '时';
+  }
   setTouch(v) {
     if (this.touch === v) return;
     this.touch = v;
@@ -181,7 +185,7 @@ export class UI {
     r.classList.remove('hidden');
     r.innerHTML = `<div class="box paper"><h2>入画为谁</h2><div class="tip">画中八百余人，各有营生。此番先做一回汴京商贾，其余角色日后陆续开卷。</div>
       <div class="cards">${ROLES.map((o) => `<div class="role ${o.open ? 'open' : 'locked'}" data-id="${o.id}">
-        <div class="seal lock">${o.open ? '可入' : '未啟'}</div><div class="rn">${o.name}</div><div class="rw">${o.who}</div><div class="rd">${o.desc}</div></div>`).join('')}</div></div>`;
+        <div class="seal lock">${o.open ? '可入' : '未启'}</div><div class="rn">${o.name}</div><div class="rw">${o.who}</div><div class="rd">${o.desc}</div></div>`).join('')}</div></div>`;
     r.onclick = (e) => {
       const c = e.target.closest('.role.open');
       if (c) onPick(c.dataset.id);
@@ -390,7 +394,7 @@ export class UI {
         ctx.fillRect(-q, -q, 2 * q, 2 * q);
         ctx.restore();
         ctx.fillStyle = '#f6e9d2';
-        ctx.font = `${12 * this.dpr}px "STKaiti","KaiTi",serif`;
+        ctx.font = `${12 * this.dpr}px "QM Kai","STKaiti","KaiTi",serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(g.target.ch, R + sx, R + sy + this.dpr);

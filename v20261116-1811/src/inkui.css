@@ -132,3 +132,19 @@
 /* 题名略收小，印章落在题名与“丝竹”一行之间，两头都不压 */
 #title .name { top: calc(var(--vh) * 6.5); font-size: min(calc(var(--vh) * 11.6), calc(var(--vw) * 10)); }
 #title .sub { top: calc(var(--vh) * 9.5); right: calc(calc(var(--vw) * 7) + min(calc(var(--vh) * 11.6), calc(var(--vw) * 10)) + 26px); }
+
+/* ── 字体的几处例外 ── */
+/* 题名与两方印（入畫、夢華）是繁体，用有繁体字形的题名字体，五个字出自同一款 */
+#title .name, #bigmap .bar h2 { font-family: var(--title); }
+#title .name .stamp span, #colophon .seal, #colophon .seal span { font-family: var(--title); }
+/* 题跋里有生僻字（丹艧的艧），毛笔那款没有，整段用楷体，免得夹一个别的字体的字 */
+#colophon .cols { font-family: var(--kai); }
+
+/* ── 入夜：直接压在画面上的字改成浅色（天黑了，墨色的字看不清） ── */
+#ui.night #q-desc, #ui.night #q-extra, #ui.night #mini-key, #ui.night #hints, #ui.night #lockhint, #ui.night #joy-hint,
+#ui.night #banner, #ui.night #banner small, #ui.night #colophon .cols, #ui.night #colophon .cols small,
+#ui.night #title .name, #ui.night #title .sub, #ui.night #title .foot, #ui.night #title .mute {
+  color: #f1e7cf; text-shadow: 0 0 7px rgba(10, 14, 28, 0.95), 0 0 2px rgba(10, 14, 28, 0.95);
+}
+#ui.night #q-extra { color: #ffc9a8; }
+#ui.night #banner, #ui.night #title .name { text-shadow: 0 0 22px rgba(10, 14, 28, 0.9), 0 0 8px rgba(10, 14, 28, 0.9); }

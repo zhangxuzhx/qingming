@@ -283,7 +283,9 @@ export function banner(b, atlas, text, x, z, ry = 0, o = {}) {
     b.cyl('wood', 0, 0, 0, 0.045, 0.07, hgt, 6, { color: W_.dark, id });
     b.beam('wood', [0, hgt - 0.25, 0], [1.05, hgt - 0.1, 0], 0.05, 0.05, { color: W_.dark, id });
     const x0 = 0.25, x1 = x0 + bw, yT = hgt - 0.3, yB = yT - bh;
-    b.quad('signWind', [x0, yB, 0], [x1, yB, 0], [x1, yT, 0], [x0, yT, 0], { rect: r, windV: [0.75, 0.9, 0, 0], lw: 0.6 });
+    // 正反各一面：只做一面的话，从背后看字是反的
+    b.quad('signWind', [x0, yB, 0.006], [x1, yB, 0.006], [x1, yT, 0.006], [x0, yT, 0.006], { rect: r, windV: [0.75, 0.9, 0, 0], lw: 0.6 });
+    b.quad('signWind', [x1, yB, -0.006], [x0, yB, -0.006], [x0, yT, -0.006], [x1, yT, -0.006], { rect: r, windV: [0.9, 0.75, 0, 0], lw: 0.6 });
   });
 }
 

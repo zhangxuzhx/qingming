@@ -28,7 +28,7 @@ function makeMaterials(tex, atlas) {
     mat: inkMat({ map: tex.mat, world: true, scale: 0.55, side: D }),
     bank: inkMat({ map: tex.bank, world: true, scale: 0.2, side: D }),
     bark: inkMat({ map: tex.bark, world: true, scale: 0.4, side: D, bump: 0.03 }),
-    lattice: inkMat({ map: tex.lattice, world: true, scale: 1.1, side: D }),
+    lattice: inkMat({ map: tex.lattice, world: true, scale: 1.1, side: D, nightGlow: true }),
     cloth: inkMat({ map: tex.cloth, world: true, scale: 0.9, side: D, tint: [1.06, 1.06, 1.04] }),
     sail: inkMat({ map: tex.cloth, world: true, scale: 0.5, side: D, shade: 0.5, tint: [1.12, 1.07, 0.96] }),
     flag: inkMat({ map: tex.cloth, world: true, scale: 0.9, side: D, wind: true, tint: [1.06, 1.06, 1.04] }),
