@@ -5,6 +5,7 @@ import { DecorSystem } from './decor.js';
 import { makeFigure, makePlayerAvatar, Crowd, poseHead } from '../world/figures.js';
 import { HOME, GATE, NODES, POIS, poi, route, nearestNode, groundY, blocked, inRailZone, surfaceAt, outOfBounds, districtAt, colliders, ceilAt } from '../world/layout.js';
 import { mainRiverSD, riverSD, RV } from '../world/river.js';
+import { terrainH } from '../world/terrain.js';
 import { addRipple } from '../engine/ink.js';
 import { RNG, mulberry32, clamp, angDiff } from '../util.js';
 
@@ -628,7 +629,7 @@ export class Game {
     const p = this.player, ui = this.ui, cam = this.camera;
     if (this.mode !== 'play') {
       // 卷首：自右向左缓缓展卷的俯瞰
-      this.cine -= dt * 2.4; // 展卷要慢：走快了，枝叶细线一帧挪好几个像素，满眼都在闪
+      this.cine -= dt * 1.5; // 展卷要慢：走快了，枝叶细线一帧挪好几个像素，满眼都在闪
       if (this.cine < -372) this.cine = 372;
       cam.fov = 34;
       cam.position.set(this.cine, 52, 96);
@@ -875,7 +876,7 @@ export class Game {
       // 沿途若被墙挡住，就把镜头拉近
       for (let t = 0.5; t <= this.camDist; t += 0.25) {
         const qx = this._ct.x + dx * t, qz = this._ct.z + dz * t, qy = ty + 0.3 + dy * t;
-        if (colliders.hit(qx, qz, 0.3, qy - 0.3, 0.5) || outOfBounds(qx, qz) || (qy < groundY(qx, qz) + 0.25 && p.y < 1.5)) break;
+        if (colliders.hit(qx, qz, 0.3, qy - 0.3, 0.5) || outOfBounds(qx, qz) || (qy < groundY(qx, qz) + 0.25 && p.y - terrainH(p.x, p.z) < 1.5)) break;
         dist = t;
       }
       this._cd = this._cd === undefined ? dist : dist < this._cd ? dist : this._cd + (dist - this._cd) * Math.min(1, dt * 5);
@@ -886,7 +887,7 @@ export class Game {
       if (Math.abs(cx - GATE.x) < GATE.halfX + 0.5 && Math.abs(cz) < GATE.pass && p.y < 6 * GATE.K) cy = Math.min(cy, 5.6 * GATE.K);
       // 屋内不穿顶棚、楼板
       cy = Math.min(cy, ceilAt(cx, cz, p.y) - 0.3, ceilAt(p.x, p.z, p.y) - 0.3);
-      cam.position.set(cx, Math.max(cy, (p.swim ? RV.WATER_Y : p.y > 1.5 ? p.y : groundY(cx, cz)) + 0.3), cz);
+      cam.position.set(cx, Math.max(cy, (p.swim ? RV.WATER_Y : p.y - terrainH(p.x, p.z) > 1.5 ? p.y : groundY(cx, cz)) + 0.3, terrainH(cx, cz) + 0.3), cz);
       cam.rotation.set(p.pitch, p.yaw, 0);
     } else {
       cam.position.set(p.x, p.y + 1.62 + bob, p.z);

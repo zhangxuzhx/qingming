@@ -6,6 +6,7 @@ import { inkMat, groundMat, waterMat, shared } from '../engine/ink.js';
 import { SignAtlas, mkCanvas, toTex } from '../engine/textures.js';
 import { RV, riverSD, CHANNELS } from './river.js';
 import { meadow } from './cover.js';
+import { terrainH, T_RECT, T_STEP, T_NX, T_NZ, T_GRID } from './terrain.js';
 import { WORLD, ROAD_HW, EAST_Z, NODES, EDGES, EXTRA_ROADS, edgeWidth, onRoad, colliders, groundY, HOME, GATE, register } from './layout.js';
 import * as P from './parts.js';
 import { figure, randomLook } from './figures.js';
@@ -27,7 +28,7 @@ function makeMaterials(tex, atlas) {
     brick: inkMat({ map: tex.brick, world: true, scale: 0.42, side: D, weather: true, bump: 0.014 }),
     stone: inkMat({ map: tex.stone, world: true, scale: 0.3, side: D, bump: 0.012 }),
     mat: inkMat({ map: tex.mat, world: true, scale: 0.55, side: D }),
-    bank: inkMat({ map: tex.bank, world: true, scale: 0.2, side: D }),
+    bank: inkMat({ map: tex.bank, world: true, scale: 0.2, side: D, upN: true }),
     bark: inkMat({ map: tex.bark, world: true, scale: 0.4, side: D, bump: 0.03 }),
     lattice: inkMat({ map: tex.lattice, world: true, scale: 1.1, side: D, nightGlow: true }),
     cloth: inkMat({ map: tex.cloth, world: true, scale: 0.9, side: D, tint: [1.06, 1.06, 1.04] }),
@@ -165,9 +166,9 @@ export function buildWorld(scene, tex) {
     home: null,
     criers: [], // 吆喝点
     at(x, z, rot, fn, y = 0) {
-      if (x || z) MAP.props.push([x, z, y, String(fn).replace(/\s+/g, ' ').slice(0, 64)]);
+      if (x || z) MAP.props.push([x, z, y + terrainH(x, z), String(fn).replace(/\s+/g, ' ').slice(0, 64)]);
       chunk(x);
-      b.place(x, y, z, rot, fn);
+      b.place(x, y + terrainH(x, z), z, rot, fn);
     },
     person(x, z, yaw, look, y) {
       chunk(x);
@@ -194,7 +195,7 @@ export function buildWorld(scene, tex) {
       chunk(x);
       const tr = new RNG(rng.i(1, 999999999));
       let dim;
-      b.place(x, 0, z, tr.f(6.28), () => (dim = P.tree(b, tr, type, s)));
+      b.place(x, terrainH(x, z), z, tr.f(6.28), () => (dim = P.tree(b, tr, type, s)));
       // 碰撞盒照着看得见的树干来（根部鼓出的那一截）
       const cr = Math.max(0.24, dim.r * 1.12);
       if (solid) colliders.add(x - cr, z - cr, x + cr, z + cr);
@@ -205,14 +206,14 @@ export function buildWorld(scene, tex) {
       if (riverSD(x, z) < 0.3 || onRoad(x, z, 0.3)) return;
       chunk(x);
       const tr = new RNG(rng.i(1, 999999999));
-      b.place(x, 0, z, 0, () => P.grassTuft(b, tr, s));
+      b.place(x, terrainH(x, z), z, 0, () => P.grassTuft(b, tr, s));
     },
     // 灌木：只种在墙根、篱边、树下这些不碍走路的地方；也挡人（膝盖高，跳得过去）
     bushAt(x, z, s = 1, key) {
       if (onRoad(x, z, 0.9) || riverSD(x, z) < 1.0 || colliders.hit(x, z, 0.5 * s, 0)) return false;
       chunk(x);
       const tr = new RNG(rng.i(1, 999999999));
-      b.place(x, 0, z, tr.f(6.28), () => P.bush(b, tr, s, key || tr.pick(['leafA', 'leafB', 'leafA'])));
+      b.place(x, terrainH(x, z), z, tr.f(6.28), () => P.bush(b, tr, s, key || tr.pick(['leafA', 'leafB', 'leafA'])));
       colliders.add(x - 0.42 * s, z - 0.42 * s, x + 0.42 * s, z + 0.42 * s, -1e9, 1.05 * s);
       return true;
     },
@@ -223,14 +224,14 @@ export function buildWorld(scene, tex) {
         const a = tr.f(6.283), d = Math.sqrt(tr.r()), px = x + Math.cos(a) * rx * d, pz = z + Math.sin(a) * rz * d;
         if (onRoad(px, pz, 1.0) || riverSD(px, pz) < 1.2 || colliders.hit(px, pz, 0.3, 0)) continue;
         chunk(px);
-        b.place(px, 0, pz, 0, () => P.bamboo(b, tr, tr.f(0.85, 1.15)));
+        b.place(px, terrainH(px, pz), pz, 0, () => P.bamboo(b, tr, tr.f(0.85, 1.15)));
         colliders.add(px - 0.1, pz - 0.1, px + 0.1, pz + 0.1);
       }
     },
     // 篱笆：画出来，也挡人
     fence(pts, h) {
       chunk(pts[0][0]);
-      b.place(0, 0, 0, 0, () => P.fence(b, pts, h));
+      b.place(0, 0, 0, 0, () => P.fence(b, pts, h, terrainH));
       for (let i = 0; i < pts.length - 1; i++) {
         const [ax, az] = pts[i], [bx, bz] = pts[i + 1], n = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 0.5));
         for (let k = 0; k <= n; k++) {
@@ -259,7 +260,11 @@ export function buildWorld(scene, tex) {
     houseAt(x, z, rot, o) {
       chunk(x);
       let info;
-      b.place(x, 0, z, rot, () => {
+      const hy = terrainH(x, z);
+      b.place(x, hy, z, rot, () => {
+        // 不在平地上的房子：屋基往下接一截，低的那一头不悬空
+        const sw = Math.abs(Math.sin(rot)) > 0.5, ex = (sw ? o.d : o.w) / 2, ez = (sw ? o.w : o.d) / 2;
+        if (Math.max(...[[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([i, j]) => Math.abs(terrainH(x + i * ex, z + j * ez) - hy))) > 0.06) b.box('stone', 0, -0.75, 0, o.w + 0.9, 1.5, o.d + 0.9, {});
         info = P.house(b, { rng, ...o });
         const y0 = info.y0, hd = o.d / 2;
         if (o.keeper !== false && (o.kind === 'shop' || o.keeper)) {
@@ -279,12 +284,12 @@ export function buildWorld(scene, tex) {
       });
       // 墙、地面、顶棚逐件登记：屋子进得去
       if (info.keeperLocal && o.keeper !== 'npc') info.solids.push([info.keeperLocal[0] - 0.28, info.keeperLocal[1] - 0.28, info.keeperLocal[0] + 0.28, info.keeperLocal[1] + 0.28]);
-      register(info, x, z, rot);
+      register(info, x, z, rot, hy);
       MAP.houses.push({ x, z, w: o.w + 1.3, d: o.d + 1.9, rot, thatch: o.roofMat === 'thatch' });
       // 把掌柜位置换算为世界坐标
       if (info.keeperLocal) {
         const [lx, lz] = info.keeperLocal, c = Math.cos(rot), s = Math.sin(rot);
-        info.keeper = { x: x + lx * c + lz * s, z: z - lx * s + lz * c, yaw: rot, y: info.y0 };
+        info.keeper = { x: x + lx * c + lz * s, z: z - lx * s + lz * c, yaw: rot, y: info.y0 + hy };
       }
       return info;
     },
@@ -391,14 +396,18 @@ export function buildWorld(scene, tex) {
     for (const ch of CHANNELS) {
       const P0 = ch.pts, n = P0.length, slope = Math.min(1.25, ch.hw * 0.4);
       for (const side of [1, -1]) {
-        const PP = [], IDX = [];
+        const PP = [], IDX = [], COL = [];
         for (let i = 0; i < n; i++) {
           const a = P0[Math.max(0, i - 1)], c2 = P0[Math.min(n - 1, i + 1)], l = Math.hypot(c2[0] - a[0], c2[1] - a[1]) || 1;
           const nx = (-(c2[1] - a[1]) / l) * side, nz = ((c2[0] - a[0]) / l) * side, c = P0[i];
           PP.push(c[0] + nx * (ch.hw + 0.08), 0.02, c[1] + nz * (ch.hw + 0.08), c[0] + nx * (ch.hw - slope), RV.WATER_Y - 0.4, c[1] + nz * (ch.hw - slope));
           if (i < n - 1) IDX.push(i * 2, i * 2 + 1, i * 2 + 2, i * 2 + 2, i * 2 + 1, i * 2 + 3);
+          // 岸坡的上沿取岸上地面的颜色（长草处偏绿、街市处是土色），往水里渐渐变浅：岸与地之间不留一条硬边
+          const gm = meadow(c[0] + nx * (ch.hw + 1.5), c[1] + nz * (ch.hw + 1.5));
+          COL.push(0.9 - 0.22 * gm, 0.88 - 0.1 * gm, 0.8 - 0.24 * gm, 0.9, 0.89, 0.87);
         }
-        b.raw('bank', PP, null, IDX, { lw: 0.85, color: [0.9, 0.89, 0.87], double: true });
+        // 与地面同一个勾线编号：岸沿不出线，只在近处的水线上有一道
+        b.raw('bank', PP, null, IDX, { lw: 0.85, colors: COL, id: 0.012, double: true });
       }
     }
   }
@@ -436,7 +445,30 @@ export function buildWorld(scene, tex) {
   mats.ground = groundMat(splat, tex.groundDetail, [WORLD.minX, WORLD.minZ, WORLD.maxX - WORLD.minX, WORLD.maxZ - WORLD.minZ]);
   const gb = new Batch();
   const E = 5000;
-  gb.quad('ground', [-E, 0, E], [E, 0, E], [E, 0, -E], [-E, 0, -E]);
+  // 地表：地形表覆盖的范围里是随地势起伏的网格（顶点高度取自同一张表），范围外四块平地接出去
+  {
+    const W1 = T_NX + 1, ROWS = 30;
+    for (let j0 = 0; j0 < T_NZ; j0 += ROWS) {
+      const j1 = Math.min(T_NZ, j0 + ROWS), P0 = [], N0 = [], I0 = [];
+      for (let j = j0; j <= j1; j++)
+        for (let i = 0; i <= T_NX; i++) {
+          const k = j * W1 + i, h = T_GRID[k];
+          const hx = (T_GRID[j * W1 + Math.min(T_NX, i + 1)] - T_GRID[j * W1 + Math.max(0, i - 1)]) / (2 * T_STEP);
+          const hz = (T_GRID[Math.min(T_NZ, j + 1) * W1 + i] - T_GRID[Math.max(0, j - 1) * W1 + i]) / (2 * T_STEP);
+          const l = Math.hypot(hx, 1, hz);
+          P0.push(T_RECT.x0 + i * T_STEP, h, T_RECT.z0 + j * T_STEP);
+          N0.push(-hx / l, 1 / l, -hz / l);
+        }
+      for (let j = 0; j < j1 - j0; j++)
+        for (let i = 0; i < T_NX; i++) {
+          const a = j * W1 + i, bq = a + 1, c = a + W1, d = c + 1;
+          I0.push(a, c, d, a, d, bq);
+        }
+      gb.raw('ground', P0, null, I0, { normals: N0 });
+    }
+    const { x0, z0, x1, z1 } = T_RECT;
+    for (const [ax, az, bx, bz] of [[-E, -E, E, z0], [-E, z1, E, E], [-E, z0, x0, z1], [x1, z0, E, z1]]) gb.quad('ground', [ax, 0, bz], [bx, 0, bz], [bx, 0, az], [ax, 0, az]);
+  }
   gb.quad('water', [-E, RV.WATER_Y, E], [E, RV.WATER_Y, E], [E, RV.WATER_Y, -E], [-E, RV.WATER_Y, -E]);
   for (const m of gb.build(mats, scene)) {
     m.frustumCulled = false;

@@ -260,7 +260,7 @@ function bridge(c) {
     const t = sd * (hw - 1.9), [x, z] = bridgeWorld(s, t), y = bridgeProfile(s);
     c.at(x, z, A + (sd > 0 ? PI : 0), () => P.parasolStall(b, rng, { r: 1.25 }), y);
     const [px, pz] = bridgeWorld(s + sd * 0.5, t + sd * 0.45);
-    c.person(px, pz, A + (sd > 0 ? PI : 0), { ...randomLook(rng, rng.pick(['man', 'woman', 'labor'])), prop: null, arms: 'tuck' }, y);
+    c.person(px, pz, A + (sd > 0 ? PI : 0), { ...randomLook(rng, rng.pick(['man', 'woman', 'labor'])), prop: null, arms: 'tuck' }); // 高度取他自己脚下的桥面（桥面是斜的，不能照搬摊子那儿的）
     colliders.add(x - 0.8, z - 0.8, x + 0.8, z + 0.8, y - 0.4, y + 2.6); // 桥面高，碰撞盒要跟着抬上去
     cries.push([x, z]);
   }

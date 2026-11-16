@@ -352,7 +352,8 @@ function boot() {
   };
 
   let last = performance.now(), fps = 60, slow = 0, smooth = 0, raises = 0;
-  const fullRatio = ink.pixelRatio;
+  const fullRatio = ink.pixelRatio, fullPixels = ink.maxPixels;
+  let boosted = false;
   function frame(now) {
     const raw = (now - last) / 1000;
     const dt = Math.max(0, Math.min(0.05, raw));
@@ -376,6 +377,15 @@ function boot() {
       ink.pixelRatio = Math.min(fullRatio, ink.pixelRatio / 0.82);
       ink.resize();
       smooth = -40;
+    }
+    // 卷首是慢慢展卷的远景，满眼细线：像素再画密些（两倍），进了画再降回来
+    const wantBoost = game.mode !== 'play' && !coarse;
+    if (wantBoost !== boosted) {
+      boosted = wantBoost;
+      ink.maxPixels = boosted ? 9e6 : fullPixels;
+      ink.pixelRatio = boosted ? Math.max(ink.pixelRatio, 2) : Math.min(ink.pixelRatio, fullRatio);
+      ink.resize();
+      slow = 0;
     }
     shared.uTime.value += dt;
     if (ui.modal && joyT) {

@@ -1442,15 +1442,18 @@ export function well(b) {
   b.rod('wood', [-0.95, 2.0, 0], [0.95, 2.0, 0], 0.06, 0.06, 6, { color: W_.dark, id });
   b.cyl('wood', 0.5, 0.6, 0.6, 0.16, 0.13, 0.3, 8, { color: W_.wood });
 }
-export function fence(b, pts, h = 0.95) {
+export function fence(b, pts, h = 0.95, yAt = () => 0) {
   const id = b.nextId();
   for (let i = 0; i < pts.length - 1; i++) {
     const p = pts[i], q = pts[i + 1], len = Math.hypot(q[0] - p[0], q[1] - p[1]), n = Math.max(1, Math.round(len / 1.4));
+    let prev = null;
     for (let k = 0; k <= n; k++) {
-      const x = p[0] + ((q[0] - p[0]) * k) / n, z = p[1] + ((q[1] - p[1]) * k) / n;
-      b.cyl('wood', x, 0, z, 0.03, 0.045, h + (k % 2) * 0.1, 4, { color: W_.dark, id });
+      const x = p[0] + ((q[0] - p[0]) * k) / n, z = p[1] + ((q[1] - p[1]) * k) / n, y = yAt(x, z);
+      b.cyl('wood', x, y - 0.15, z, 0.03, 0.045, h + 0.15 + (k % 2) * 0.1, 4, { color: W_.dark, id });
+      // 横杆一段一段跟着桩子走，坡上不至于悬空或入地
+      if (prev) for (const yy of [h * 0.4, h * 0.8]) b.beam('wood', [prev[0], prev[1] + yy, prev[2]], [x, y + yy, z], 0.04, 0.04, { color: W_.wood, id });
+      prev = [x, y, z];
     }
-    for (const yy of [h * 0.4, h * 0.8]) b.beam('wood', [p[0], yy, p[1]], [q[0], yy, q[1]], 0.04, 0.04, { color: W_.wood, id });
   }
 }
 export function haystack(b) {

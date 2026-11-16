@@ -466,6 +466,10 @@ void main(){
   #endif
   if(uGhost > 0.5) col = mix(col, uGhost > 1.5 ? vec3(0.9,0.4,0.32) : vec3(0.6,0.85,0.55), 0.4);
   gColor = vec4(clamp(col * PIG, 0.0, 1.0), 1.0);
+  #ifdef UP_N
+  // 勾线时只当它是朝天的面：与地面相接处不出折线。河岸的上沿是一条又长又直的线，镜头一动就在像素格子上一跳一跳
+  nv = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
+  #endif
   #ifdef FLAT_N
   gNormal = vec4(0.5, 0.5, vInk.y, vInk.x);
   #else
@@ -554,7 +558,7 @@ void main(){
   col *= 1.0 - 0.22 * (1.0 - smoothstep(0.0, 0.8, sd));
   float bank = 1.0 - smoothstep(0.0, 4.5, sd);
   col *= 1.0 - 0.24 * bank * (0.5 + nz2);
-  vec3 nl = perturb(vWorld, vec3(0.0, 1.0, 0.0), hgt * (1.0 - smoothstep(20.0, 60.0, vZ)));
+  vec3 nl = perturb(vWorld, normalize(vNw), hgt * (1.0 - smoothstep(20.0, 60.0, vZ)));
   col = lightWash(col, nl, 1.0);
   col = applyFog(col);
   gColor = vec4(clamp(col * PIG, 0.0, 1.0), 1.0);
@@ -680,6 +684,7 @@ export function inkMat(o = {}) {
   if (o.fade) defines.FADE = '';
   if (o.inkFade) defines.INKFADE = '';
   if (o.nightGlow) defines.NIGHTGLOW = '';
+  if (o.upN) defines.UP_N = '';
   const m = new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3,
     defines,
