@@ -166,6 +166,8 @@ export function buildWorld(scene, tex) {
     npcs: [], // 可交谈的人物
     home: null,
     criers: [], // 吆喝点
+    porters: [], // 码头脚夫各自来回走的路线
+    smokes: [], // 冒烟冒汽的地方：[x, y, z, 种类]（0 蒸笼、茶炉的白汽  1 灶间的炊烟  2 香炉的青烟）
     at(x, z, rot, fn, y = 0) {
       if (x || z) MAP.props.push([x, z, y + terrainH(x, z), String(fn).replace(/\s+/g, ' ').slice(0, 64)]);
       chunk(x);
@@ -585,6 +587,94 @@ export function buildWorld(scene, tex) {
   catkins.layers.set(1);
   scene.add(catkins);
 
+  // ── 炊烟、蒸汽、香烟 ──
+  // 画法：每处十来团“云头”，自下而上升、越升越大、边上越蚀越多直到散尽。云头是不透明的（这套画法没有半透明），
+  // 靠边缘的噪声和侵蚀显得松散；不勾线，不参加跨帧累积。
+  {
+    const em = ctx.smokes.slice();
+    // 街上的吃食摊子：隔一个冒一处白汽
+    MAP.props.forEach((p, i) => {
+      if (/Stall\(/.test(p[3]) && i % 2 === 0) em.push([p[0], p[2] + 1.05, p[1], 0]);
+    });
+    // 人家的灶间：茅舍、村舍多半在做饭；城里的隔几户一处
+    MAP.houses.forEach((h, i) => {
+      if (h.home) return;
+      const k = Math.abs(Math.sin(h.x * 12.9898 + h.z * 78.233) * 43758.5453) % 1;
+      if (k < (h.thatch ? 0.6 : 0.16)) em.push([h.x - Math.sin(h.rot) * h.d * 0.28 + (k - 0.3) * h.w * 0.5, terrainH(h.x, h.z) + (h.thatch ? 3.3 : 4.4), h.z - Math.cos(h.rot) * h.d * 0.28, 1]);
+    });
+    const PER = 10, n = em.length * PER, pos = new Float32Array(n * 3), seed = new Float32Array(n * 4), srng = new RNG(909);
+    em.forEach((e, i) => {
+      for (let j = 0; j < PER; j++) {
+        const k = i * PER + j;
+        pos.set([e[0], e[1], e[2]], k * 3);
+        seed.set([(j + srng.r() * 0.6) / PER, e[3], srng.r(), srng.r()], k * 4);
+      }
+    });
+    const sgeo = new THREE.BufferGeometry();
+    sgeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    sgeo.setAttribute('aSeed', new THREE.BufferAttribute(seed, 4));
+    const smokeMat = new THREE.ShaderMaterial({
+      glslVersion: THREE.GLSL3,
+      uniforms: { uTime: shared.uTime, uResY: shared.uResY, uJit: shared.uJit, tNoise: shared.tNoise, uNight: shared.uNight },
+      vertexShader: /* glsl */ `
+        attribute vec4 aSeed;
+        uniform float uTime;
+        uniform float uResY;
+        uniform vec2 uJit;
+        varying float vAge;
+        varying vec3 vSeed;
+        void main(){
+          float kind = aSeed.y;
+          // 白汽升得快、散得快；炊烟慢悠悠升得高，顺风飘
+          float rate = kind < 0.5 ? 0.42 : kind < 1.5 ? 0.11 : 0.16;
+          float age = fract(uTime * rate * (0.85 + 0.3 * aSeed.z) + aSeed.x);
+          float rise = kind < 0.5 ? 1.5 : kind < 1.5 ? 6.5 : 2.6;
+          float drift = kind < 0.5 ? 0.25 : kind < 1.5 ? 3.2 : 0.8;
+          vec3 p = position;
+          p.y += rise * pow(age, 0.85);
+          p.x += drift * age * age + sin(uTime * 0.6 + aSeed.w * 40.0 + age * 5.0) * 0.16 * age + (aSeed.z - 0.5) * 0.25;
+          p.z += drift * 0.45 * age * age + cos(uTime * 0.5 + aSeed.z * 31.0 + age * 4.0) * 0.16 * age + (aSeed.w - 0.5) * 0.25;
+          float sz = kind < 0.5 ? mix(0.22, 0.75, age) : kind < 1.5 ? mix(0.5, 2.3, age) : mix(0.1, 0.5, age);
+          vec4 mv = viewMatrix * vec4(p, 1.0);
+          gl_Position = projectionMatrix * mv;
+          gl_Position.xy -= uJit * gl_Position.w;
+          gl_PointSize = min(sz * projectionMatrix[1][1] * uResY * 0.5 / max(0.4, -mv.z), uResY * 0.5);
+          // 太远了不画（只剩一两个像素的白点）
+          if(-mv.z > 150.0) gl_PointSize = 0.0;
+          vAge = age;
+          vSeed = vec3(aSeed.z, aSeed.w, kind);
+        }`,
+      fragmentShader: /* glsl */ `
+        layout(location = 0) out highp vec4 gColor;
+        layout(location = 1) out highp vec4 gNormal;
+        uniform sampler2D tNoise;
+        uniform float uTime;
+        uniform float uNight;
+        varying float vAge;
+        varying vec3 vSeed;
+        void main(){
+          vec2 d = gl_PointCoord - 0.5;
+          float r = length(d) * 2.0;
+          float n = texture(tNoise, gl_PointCoord * 0.33 + vSeed.xy * vec2(7.1, 3.3) + vec2(0.0, uTime * 0.015)).r;
+          float n2 = texture(tNoise, gl_PointCoord * 0.9 + vSeed.yx * 5.0).g;
+          // 云头：圆里头再用噪声啃出边；越老啃得越多，最后散尽。刚冒出来时也从小长大
+          float body = (1.0 - r) + (n - 0.5) * 0.85 + (n2 - 0.5) * 0.3;
+          float cut = mix(0.18, 0.72, smoothstep(0.25, 1.0, vAge)) + (1.0 - smoothstep(0.0, 0.12, vAge)) * 0.5;
+          if(body < cut) discard;
+          vec3 col = vSeed.z < 0.5 ? vec3(1.2, 1.2, 1.18) : vSeed.z < 1.5 ? vec3(0.93, 0.95, 0.98) : vec3(0.9, 0.95, 1.02);
+          // 上亮下暗、里头有浓淡；入夜压暗
+          col *= 0.9 + 0.14 * n + (0.5 - gl_PointCoord.y) * 0.12;
+          col *= mix(1.0, 0.5, clamp(uNight * 1.6, 0.0, 1.0));
+          gColor = vec4(clamp(col * 0.8, 0.0, 1.0), 0.0);
+          gNormal = vec4(0.5, 0.5, 0.0, 0.0);
+        }`,
+    });
+    const smoke = new THREE.Points(sgeo, smokeMat);
+    smoke.frustumCulled = false;
+    smoke.layers.set(1);
+    scene.add(smoke);
+  }
+
   let t = 0;
   return {
     viewDist: 470,
@@ -593,6 +683,7 @@ export function buildWorld(scene, tex) {
     npcs: ctx.npcs,
     home: ctx.home,
     criers: ctx.criers,
+    porters: ctx.porters,
     update(dt, cam) {
       t += dt;
       farGroup.position.set(cam.position.x, 0, cam.position.z);

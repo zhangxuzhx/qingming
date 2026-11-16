@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { Batch } from '../engine/batch.js';
 import { FACE, FACE_DEFS, faceUV, headU, HAIRLINE, hairlineAt, HEAD_Y0, HEAD_Y1 } from '../engine/textures.js';
 import { NODES, adjacency, edgeWidth, groundY, colliders } from './layout.js';
-import { angDiff } from '../util.js';
+import { angDiff, clamp } from '../util.js';
 import { shared, lifeMotion, markDynamic } from '../engine/ink.js';
 
 export const ROBES = [[1.12, 1.1, 1.05], [1.06, 1.04, 0.99], [0.8, 0.84, 0.86], [0.92, 0.87, 0.76], [0.85, 0.89, 0.83], [0.78, 0.76, 0.73], [1.0, 0.96, 0.88], [0.72, 0.78, 0.82], [1.1, 1.08, 1.02], [0.88, 0.8, 0.74]];
@@ -837,7 +837,7 @@ export class Crowd {
       const [ax, az] = NODES[e[0]], [bx, bz] = NODES[e[1]];
       const slow = look.face === FACE.elder || look.prop === 'pole' ? 0.82 : 1;
       const ud = grp.userData;
-      const w = { grp, far, a: e[0], b: e[1], x: ax + (bx - ax) * t, z: az + (bz - az) * t, yaw: 0, off: 0, speed: rng.f(0.95, 1.5) * slow * ((look.s || 1) < 0.8 ? 1.25 : 1), phase: rng.f(6), s: look.s || 1, legs: ud.legs, shins: ud.shins, feet: ud.feet, arms: ud.arms, pause: 0, tx: 0, tz: 0 };
+      const w = { grp, far, a: e[0], b: e[1], x: ax + (bx - ax) * t, z: az + (bz - az) * t, yaw: 0, off: 0, speed: rng.f(0.95, 1.5) * slow * ((look.s || 1) < 0.8 ? 1.25 : 1), phase: rng.f(6), s: look.s || 1, legs: ud.legs, shins: ud.shins, feet: ud.feet, arms: ud.arms, pause: 0, cd: rng.f(3, 30), gaze: 0, shy: 0, tx: 0, tz: 0 };
       this._aim(w);
       w.x += (w.tx - bx) ;
       w.z += (w.tz - bz);
@@ -854,6 +854,90 @@ export class Crowd {
       this.walkers.push(w);
     }
   }
+  // 码头的脚夫：沿各自的一条路来回走——岸上的货堆 ⇄ 跳板 ⇄ 船上。往岸上走时肩上扛着麻包，回船时空着手。
+  // routes：每条是一串 [x, z]，头一个点在岸上，末一个点在船上
+  addPorters(routes) {
+    const rng = this.rng;
+    routes.forEach((pts, i) => {
+      const look = { ...randomLook(rng, 'labor'), prop: null, arms: 'down', hat: rng.pick(['scarf', 'none', 'scarf']), s: 1 };
+      const grp = makeFigure(this.mats, look, { walk: true }), far = makeFigure(this.mats, look, { far: true });
+      // 肩上的麻包：单成一件，扛着时才显
+      const sack = new THREE.Group();
+      LOD = 0;
+      for (const m of part(this.mats, (b) => {
+        const px = -0.17;
+        plain(b, [[px, SHY + 0.03, 0.27, 0.04, 0.04], [px, SHY + 0.1, 0.16, 0.1, 0.085], [px, SHY + 0.15, -0.04, 0.16, 0.125], [px + 0.01, SHY + 0.07, -0.26, 0.17, 0.14], [px + 0.01, SHY - 0.05, -0.36, 0.1, 0.09]], [0.9, 0.86, 0.74], b.nextId(), { seg: 10, side: [1, 0, 0] });
+      })) sack.add(m);
+      grp.add(sack);
+      far.visible = false;
+      this.scene.add(markDynamic(far));
+      this.scene.add(markDynamic(grp));
+      const ud = grp.userData, at = (i * 0.37) % 1, k = Math.floor(at * (pts.length - 1));
+      this.walkers.push({ grp, far, route: pts, ri: k, dir: i % 2 ? 1 : -1, wait: 0, sack, x: pts[k][0], z: pts[k][1], yaw: 0, speed: rng.f(1.05, 1.3), phase: rng.f(6), s: 1, legs: ud.legs, shins: ud.shins, feet: ud.feet, arms: ud.arms, pause: 0, cd: 1e9, gaze: 0, shy: 0 });
+    });
+  }
+  _porter(w, dt, px, pz) {
+    const pd = Math.hypot(px - w.x, pz - w.z), gone = pd > 150, isFar = pd > 46, R = w.route;
+    w.grp.visible = !isFar;
+    w.far.visible = isFar && !gone;
+    let moving = false;
+    if (w.wait > 0) {
+      // 到头了：弯腰卸下（或扛起）麻包，直起身再往回走
+      w.wait -= dt;
+      if (w.wait <= 0) w.dir = -w.dir;
+    } else {
+      const t = R[w.ri + w.dir];
+      if (!t) w.wait = this.rng.f(1.6, 3.2);
+      else {
+        const dx = t[0] - w.x, dz = t[1] - w.z, d = Math.hypot(dx, dz);
+        if (d < 0.12) w.ri += w.dir;
+        else {
+          w.yaw += angDiff(Math.atan2(dx, dz), w.yaw) * Math.min(1, dt * 7);
+          // 礼让：前头有人挡着就等一等（跳板窄，过不去）
+          const blockedByPlayer = pd < 1.15 && Math.abs(angDiff(Math.atan2(px - w.x, pz - w.z), w.yaw)) < 1.2;
+          if (!blockedByPlayer) {
+            const v = Math.min(d, w.speed * (w.dir < 0 ? 0.86 : 1) * dt);
+            w.x += (dx / d) * v;
+            w.z += (dz / d) * v;
+            w.phase += v * 4.6;
+            moving = true;
+          }
+        }
+      }
+    }
+    // 往岸上走（dir < 0）时扛着包；在船上那头等的时候是去扛，在岸上那头等的时候是卸下
+    const carrying = w.wait > 0 ? (w.ri > 0 ? w.wait < 1.1 : w.wait > 1.1) : w.dir < 0;
+    w.sack.visible = carrying;
+    if (gone) return;
+    const y = groundY(w.x, w.z);
+    if (isFar) {
+      w.far.position.set(w.x, y, w.z);
+      w.far.rotation.y = w.yaw;
+      return;
+    }
+    const k = Math.min(1, dt * 10);
+    w.amp = (w.amp || 0) + ((moving ? 1 : 0) - (w.amp || 0)) * k;
+    const sw = Math.sin(w.phase) * w.amp, cw = Math.cos(w.phase) * w.amp, g = w.grp;
+    const bend = w.wait > 0 ? Math.sin(Math.min(1, w.wait / 2.2) * Math.PI) * 0.55 : 0;
+    w.lean = (w.lean || 0) + ((bend + (carrying ? 0.1 : 0.02)) - (w.lean || 0)) * Math.min(1, dt * 6);
+    g.position.set(w.x, y + Math.abs(Math.cos(w.phase)) * 0.024 * w.amp, w.z);
+    g.rotation.set(w.lean, w.yaw + sw * 0.04, sw * 0.02);
+    if (w.legs) {
+      w.legs[0].rotation.x = sw * 0.42;
+      w.legs[1].rotation.x = -sw * 0.42;
+      if (w.shins) {
+        w.shins[0].rotation.x = Math.max(0, -cw) * 0.8 + 0.06 * w.amp;
+        w.shins[1].rotation.x = Math.max(0, cw) * 0.8 + 0.06 * w.amp;
+      }
+    }
+    if (w.arms) {
+      // 扛包的那只手举上去扶着，另一只照常摆
+      const up = carrying ? 1 : 0;
+      w.armUp = (w.armUp || 0) + (up - (w.armUp || 0)) * Math.min(1, dt * 6);
+      w.arms[0].rotation.x = -sw * 0.4 * (1 - w.armUp) - 2.55 * w.armUp;
+      w.arms[1].rotation.x = sw * 0.4;
+    }
+  }
   _aim(w) {
     const [ax, az] = NODES[w.a], [bx, bz] = NODES[w.b];
     const dx = bx - ax, dz = bz - az, l = Math.hypot(dx, dz) || 1;
@@ -863,8 +947,14 @@ export class Crowd {
     w.tx = bx + (-dz / l) * w.off;
     w.tz = bz + (dx / l) * w.off;
   }
-  update(dt, px, pz) {
+  // px pz：主角的位置；pvx pvz：主角的速度（有人跑过身边，行人会侧身看一眼、往旁边让）
+  update(dt, px, pz, pvx = 0, pvz = 0) {
+    const psp = Math.hypot(pvx, pvz);
     for (const w of this.walkers) {
+      if (w.route) {
+        this._porter(w, dt, px, pz);
+        continue;
+      }
       const dx = w.tx - w.x, dz = w.tz - w.z, d = Math.hypot(dx, dz);
       if (d < 1.2) {
         const opts = adjacency[w.b].filter((k) => k !== w.a && k !== 'h');
@@ -916,10 +1006,32 @@ export class Crowd {
         w.b = next;
         this._aim(w);
       }
+      const toP = Math.atan2(px - w.x, pz - w.z);
       if (pd < 1.25) {
         // 礼让：迎面遇人则驻足
-        const toP = Math.atan2(px - w.x, pz - w.z);
         if (Math.abs(angDiff(toP, w.yaw)) < 1.2) moving = false;
+      }
+      // 驻足：走着走着在路边停一停，侧过身去看（摊子、河上的船、街对面的热闹），过几息再走
+      w.cd -= dt;
+      if (w.pause > 0) {
+        w.pause -= dt;
+        moving = false;
+        w.yaw += angDiff(w.gaze, w.yaw) * Math.min(1, dt * 3.5);
+      } else if (w.cd <= 0 && moving && pd < 70) {
+        w.pause = this.rng.f(2.5, 7);
+        w.cd = this.rng.f(14, 45);
+        // 靠右行，右手边是路边的铺面摊子：多半朝那边看，偶尔回头看街心
+        w.gaze = w.yaw + (this.rng.chance(0.78) ? -1 : 1) * this.rng.f(1.15, 1.75);
+      }
+      // 有人从身边跑过：侧身看一眼，往旁边让半步
+      const hot = pd < 2.8 && psp > 4.6 ? 1 : 0;
+      w.shy += (hot - w.shy) * Math.min(1, dt * (hot ? 9 : 1.6));
+      if (hot && pd > 0.3) {
+        const ax = ((w.x - px) / pd) * dt * 1.3, az = ((w.z - pz) / pd) * dt * 1.3;
+        if (!colliders.hit(w.x + ax * 6, w.z + az * 6, 0.2, gy)) {
+          w.x += ax;
+          w.z += az;
+        }
       }
       if (moving) {
         w.x += Math.sin(w.yaw) * w.speed * dt;
@@ -937,8 +1049,11 @@ export class Crowd {
       w.amp = (w.amp || 0) + ((moving ? 1 : 0) - (w.amp || 0)) * k;
       const sw = Math.sin(w.phase) * w.amp, cw = Math.cos(w.phase) * w.amp, g = w.grp;
       g.position.set(w.x, groundY(w.x, w.z) + Math.abs(Math.cos(w.phase)) * 0.026 * w.amp * w.s, w.z);
-      g.rotation.y = w.yaw + sw * 0.045;
+      g.rotation.y = w.yaw + sw * 0.045 + clamp(angDiff(toP, w.yaw), -0.7, 0.7) * w.shy;
       g.rotation.z = sw * 0.022;
+      // 驻足时身子微微前探
+      w.lean = (w.lean || 0) + ((w.pause > 0 ? 0.07 : 0) - (w.lean || 0)) * Math.min(1, dt * 3);
+      g.rotation.x = w.lean;
       if (w.legs) {
         w.legs[0].rotation.x = sw * 0.44;
         w.legs[1].rotation.x = -sw * 0.44;
@@ -958,8 +1073,8 @@ export class Crowd {
         w.arms[1].rotation.x = sw * 0.4;
       }
     }
-    // 行人彼此留出身位，不叠在一起走
-    const near = this.walkers.filter((w) => w.grp.visible);
+    // 行人彼此留出身位，不叠在一起走（脚夫走的是定死的路，不挤他们）
+    const near = this.walkers.filter((w) => w.grp.visible && !w.route);
     for (let i = 0; i < near.length; i++)
       for (let j = i + 1; j < near.length; j++) {
         const a = near[i], c = near[j], ex = c.x - a.x, ez = c.z - a.z, d2 = ex * ex + ez * ez;

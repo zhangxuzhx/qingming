@@ -53,6 +53,7 @@ export class Game {
     }
     this.crowd = new Crowd(scene, world.mats, new RNG(77));
     this.crowd.spawn(crowd);
+    this.crowd.addPorters(crowd < 80 ? world.porters.filter((_, i) => i % 2 === 0) : world.porters); // 手机上脚夫减半
     this.decor = new DecorSystem(scene, world.mats, world.home);
     this.decorMode = false;
     this.decorSel = 0;
@@ -719,17 +720,39 @@ export class Game {
       this.boundT = 6;
     }
     this.boundT -= dt;
-    if (!blocked(nx, p.z, 0.35, p.y)) p.x = nx;
+    // 在船上、跳板上走，不会一脚踩空掉进水里（甲板没有栏杆，舷边的走道又窄）；要下水得跳
+    const aboard = p.ground && !p.swim && riverSD(p.x, p.z) < -0.45 && !surfaceAt(p.x, p.z, p.y).water;
+    const drop = (x, z) => aboard && riverSD(x, z) < -0.45 && surfaceAt(x, z, p.y).water;
+    // 走不动时往旁边让一点再试：船是斜着泊的，贴着船身、沿着舷边走（游）要能顺着滑过去，不能卡住
+    const clear = (x, z) => !blocked(x, z, 0.35, p.y) && !drop(x, z);
+    const ex = Math.abs(nx - p.x) * 0.5, ez = Math.abs(nz - p.z) * 0.5;
+    if (clear(nx, p.z)) p.x = nx;
+    else if (ex > 1e-5 && clear(nx, p.z + ex)) (p.x = nx), (p.z += ex);
+    else if (ex > 1e-5 && clear(nx, p.z - ex)) (p.x = nx), (p.z -= ex);
     else p.vx = 0;
-    if (!blocked(p.x, nz, 0.35, p.y)) p.z = nz;
+    if (clear(p.x, nz)) p.z = nz;
+    else if (ez > 1e-5 && clear(p.x + ez, nz)) (p.z = nz), (p.x += ez);
+    else if (ez > 1e-5 && clear(p.x - ez, nz)) (p.z = nz), (p.x -= ez);
     else p.vz = 0;
+    if (blocked(p.x, p.z, 0.35, p.y)) {
+      // 已经嵌在什么东西里了（比如从船边跳下水，正落在船身边上）：朝最近的空处挪出去，免得卡死
+      out: for (const d of [0.2, 0.4, 0.7, 1.1, 1.6])
+        for (let k = 0; k < 8; k++) {
+          const qx = p.x + Math.sin(k * 0.7854) * d, qz = p.z + Math.cos(k * 0.7854) * d;
+          if (!blocked(qx, qz, 0.35, p.y)) {
+            p.x = qx;
+            p.z = qz;
+            break out;
+          }
+        }
+    }
     // 也不从行人身上穿过去
     for (const w of this.crowd.walkers) {
       if (!w.grp.visible) continue;
       const dx = p.x - w.x, dz = p.z - w.z, d = Math.hypot(dx, dz);
       if (d < 0.52 && d > 1e-3 && Math.abs(p.y - groundY(w.x, w.z)) < 1.2) {
         const qx = w.x + (dx / d) * 0.52, qz = w.z + (dz / d) * 0.52;
-        if (!blocked(qx, qz, 0.35, p.y)) {
+        if (!blocked(qx, qz, 0.35, p.y) && !drop(qx, qz)) {
           p.x = qx;
           p.z = qz;
         }
@@ -954,7 +977,7 @@ export class Game {
     cam.updateMatrixWorld();
 
     // 行人与可交谈者
-    this.crowd.update(dt, p.x, p.z);
+    this.crowd.update(dt, p.x, p.z, p.vx, p.vz);
     let focus = null, fd = 3.7;
     for (const [id, n] of this.npcs) {
       const dx = p.x - n.spec.x, dz = p.z - n.spec.z, d = Math.hypot(dx, dz);

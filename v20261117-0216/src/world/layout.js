@@ -234,6 +234,13 @@ class Colliders {
     const hw = (sw ? d : w) / 2, hd = (sw ? w : d) / 2;
     return this.add(x - hw, z - hd, x + hw, z + hd, y0, y1);
   }
+  // 斜放的盒子（船上的篷舱、舵楼、船身）：中心、半长半宽、朝向（弧度，与 Object3D.rotation.y 同向）、上下沿（绝对高度）
+  addOBB(cx, cz, hx, hz, rot, y0, y1) {
+    const co = Math.cos(rot), si = Math.sin(rot), ex = Math.abs(co) * hx + Math.abs(si) * hz, ez = Math.abs(si) * hx + Math.abs(co) * hz;
+    const b = this.add(cx - ex, cz - ez, cx + ex, cz + ez, y0, y1, true);
+    Object.assign(b, { cx, cz, hx, hz, co, si });
+    return b;
+  }
   // py：脚底高度（不给则不论高低）。身高 h 的人，自脚上 0.35（可迈过的门槛）到头顶这一段与盒子相交才算撞上
   hit(x, z, r, py, h = 1.7) {
     if (py === undefined) for (const t of this.lots) if (x > t.x0 - r && x < t.x1 + r && z > t.z0 - r && z < t.z1 + r) return true;
@@ -244,6 +251,13 @@ class Colliders {
         if (!l) continue;
         for (const b of l) {
           if (py !== undefined && (py + 0.35 >= b.y1 || py + h <= b.y0)) continue;
+          if (b.hx !== undefined) {
+            // 斜放的：换到盒子自己的坐标里比
+            const dx = x - b.cx, dz = z - b.cz, lx = dx * b.co - dz * b.si, lz = dx * b.si + dz * b.co;
+            const qx = Math.max(-b.hx, Math.min(lx, b.hx)), qz = Math.max(-b.hz, Math.min(lz, b.hz));
+            if ((lx - qx) ** 2 + (lz - qz) ** 2 < r * r) return true;
+            continue;
+          }
           const nx = Math.max(b.x0, Math.min(x, b.x1)), nz = Math.max(b.z0, Math.min(z, b.z1));
           if ((x - nx) ** 2 + (z - nz) ** 2 < r * r) return true;
         }
@@ -273,6 +287,41 @@ export function addDeck(x0, z0, x1, z1, y) {
 // 斜面：沿 axis（'x' / 'z'）自坐标小的一端 ya 升（降）到大的一端 yb
 export function addRamp(x0, z0, x1, z1, axis, ya, yb) {
   putDeck({ x0: Math.min(x0, x1), z0: Math.min(z0, z1), x1: Math.max(x0, x1), z1: Math.max(z0, z1), y: ya, yb, ax: axis === 'x' ? 1 : 2 });
+}
+// ── 船：甲板是能走的。船身随水流斜着泊，甲板中间低、两头翘，不是一块平的矩形，所以单算 ──
+// 断面与 parts.js 的 boat() 一致：t = 船长方向 -1（船头）…1（船尾）
+export const boatHalfBeam = (B, t) => (B / 2) * (1 - 0.5 * Math.abs(t) ** 3);
+export const boatDeckLocal = (t) => 0.39 + 0.8 * Math.abs(t) ** 2.2 + (t > 0 ? 0.3 * t * t : 0);
+export const BOAT_DECKS = [];
+export function addBoatDeck(x, z, rot, L, B, y) {
+  const d = { x, z, L, B, y, co: Math.cos(rot), si: Math.sin(rot), R: L / 2 + 1 };
+  BOAT_DECKS.push(d);
+  return d;
+}
+// 跳板（搭在岸与船、船与船之间的斜板）：两端的位置与高度、半宽
+export const GANGS = [];
+export function addGang(ax, ay, az, bx, by, bz, hw = 0.5) {
+  GANGS.push({ ax, ay, az, bx, by, bz, hw, l2: (bx - ax) ** 2 + (bz - az) ** 2 });
+}
+// (x,z) 处船的甲板或跳板的高；不在其上则 null。脚底高 py 的人迈不上去的（高出一步以上）不算
+function boatAt(x, z, py) {
+  let best = null;
+  for (const g of GANGS) {
+    const u = Math.max(0, Math.min(1, ((x - g.ax) * (g.bx - g.ax) + (z - g.az) * (g.bz - g.az)) / g.l2));
+    const dx = x - (g.ax + (g.bx - g.ax) * u), dz = z - (g.az + (g.bz - g.az) * u);
+    if (dx * dx + dz * dz > g.hw * g.hw) continue;
+    const h = g.ay + (g.by - g.ay) * u;
+    if (h <= py + STEP && (best === null || h > best)) best = h;
+  }
+  for (const b of BOAT_DECKS) {
+    const dx = x - b.x, dz = z - b.z;
+    if (Math.abs(dx) > b.R || Math.abs(dz) > b.R) continue;
+    const lx = dx * b.co - dz * b.si, lz = dx * b.si + dz * b.co, t = (2 * lx) / b.L;
+    if (Math.abs(t) > 0.97 || Math.abs(lz) > boatHalfBeam(b.B, t) - 0.1) continue;
+    const h = b.y + boatDeckLocal(t);
+    if (h <= py + STEP && (best === null || h > best)) best = h;
+  }
+  return best;
 }
 const deckH = (d, x, z) => (d.ax === 0 ? d.y : d.ax === 1 ? d.y + ((d.yb - d.y) * (x - d.x0)) / (d.x1 - d.x0) : d.y + ((d.yb - d.y) * (z - d.z0)) / (d.z1 - d.z0));
 
@@ -309,6 +358,11 @@ function deckAt(x, z, py) {
       const h = deckH(d, x, z);
       if (h <= py + STEP && (best === null || h > best)) best = h;
     }
+  // 船与跳板（在水上，只在近水处才查）
+  if (BOAT_DECKS.length && riverSD(x, z) < 3) {
+    const h = boatAt(x, z, py);
+    if (h !== null && (best === null || h > best)) best = h;
+  }
   return best;
 }
 
@@ -317,7 +371,8 @@ export function groundY(x, z) {
   const br = bridgeAt(x, z);
   if (br !== null && br !== BLOCK) return br;
   const t = terrainH(x, z), d = deckAt(x, z, t + 0.45);
-  return d === null ? t : Math.max(d, t);
+  // 水面上（船的甲板、跳板）没有地面可言，甲板多高就是多高
+  return d === null ? t : riverSD(x, z) < 0 ? d : Math.max(d, t);
 }
 
 // py：脚底高度。栏杆只挡与桥面齐平的人——跃起可越，泅水可自桥下过；河水不是墙。
@@ -339,7 +394,7 @@ export function surfaceAt(x, z, py) {
   let d = deckAt(x, z, py);
   if (br !== null && br !== BLOCK && py >= br - STEP && (d === null || br > d)) d = br;
   _surf.water = false;
-  if (d !== null) _surf.y = Math.max(d, terrainH(x, z));
+  if (d !== null) _surf.y = riverSD(x, z) < 0 ? d : Math.max(d, terrainH(x, z));
   else if (riverSD(x, z) < 0) {
     _surf.y = RV.WATER_Y;
     _surf.water = true;
