@@ -3,6 +3,7 @@
 // 走向照原画：郊野小路与码头街在汴河北岸（z = EAST_Z）；虹桥斜跨，过桥落到西南岸；
 // 自桥头向西是城外街、护城河平桥、城门、城内大街（沿 z = 0），到赵太丞家卷尾而止。
 import { RV, riverSD } from './river.js';
+import { terrainH } from './terrain.js';
 
 export const WORLD = { minX: -470, maxX: 490, minZ: -200, maxZ: 220 }; // 地表铺设范围
 export const BOUNDS = { minX: -402, maxX: 405, minZ: -112, maxZ: 104 }; // 可行走范围
@@ -210,9 +211,11 @@ class Colliders {
     this.lots.push({ x0, z0, x1, z1 });
   }
   // 不写高度的，按地面上的寻常物件算（树干、摊子、车马）：只占到 5 米高，不碍城头与楼上
-  add(x0, z0, x1, z1, y0 = -1e9, y1 = 5) {
+  // “自地面起”的盒子（没给下沿的）：上沿按所在处的地面算，坡上的篱笆、柴垛才挡得住人。abs 为真则上沿是绝对高度（建筑登记时用）
+  add(x0, z0, x1, z1, y0 = -1e9, y1 = 5, abs = false) {
     if (x0 > x1) [x0, x1] = [x1, x0];
     if (z0 > z1) [z0, z1] = [z1, z0];
+    if (!abs && y0 === -1e9 && y1 < 1e8) y1 += terrainH((x0 + x1) / 2, (z0 + z1) / 2);
     const b = { x0, z0, x1, z1, y0, y1 };
     this.boxes.push(b);
     const c = this.cell;
@@ -300,8 +303,8 @@ function deckAt(x, z, py) {
 export function groundY(x, z) {
   const br = bridgeAt(x, z);
   if (br !== null && br !== BLOCK) return br;
-  const d = deckAt(x, z, 0.45);
-  return d === null ? 0 : d;
+  const t = terrainH(x, z), d = deckAt(x, z, t + 0.45);
+  return d === null ? t : Math.max(d, t);
 }
 
 // py：脚底高度。栏杆只挡与桥面齐平的人——跃起可越，泅水可自桥下过；河水不是墙。
@@ -323,11 +326,11 @@ export function surfaceAt(x, z, py) {
   let d = deckAt(x, z, py);
   if (br !== null && br !== BLOCK && py >= br - STEP && (d === null || br > d)) d = br;
   _surf.water = false;
-  if (d !== null) _surf.y = d;
+  if (d !== null) _surf.y = Math.max(d, terrainH(x, z));
   else if (riverSD(x, z) < 0) {
     _surf.y = RV.WATER_Y;
     _surf.water = true;
-  } else _surf.y = 0;
+  } else _surf.y = terrainH(x, z);
   return _surf;
 }
 export const outOfBounds = (x, z) => x < BOUNDS.minX || x > BOUNDS.maxX || z < BOUNDS.minZ || z > BOUNDS.maxZ;
@@ -346,7 +349,9 @@ export function ceilAt(x, z, py) {
 // 登记一座建筑的墙、楼面、楼梯与顶棚。info 由构件函数给出，用的是 b.place(x, 0, z, rot) 的局部坐标（rot 为 90° 的倍数）：
 //   solids [x0, z0, x1, z1, y0?, y1?]   decks [x0, z0, x1, z1, y]
 //   ramps  [x0, z0, x1, z1, 'x'|'z', 小端高, 大端高]   ceils [x0, z0, x1, z1, y]
-export function register(info, x, z, rot = 0) {
+// yOff：建筑所在处的地面高（起伏的地形上，墙、楼面、顶棚都跟着抬）
+export function register(info, x, z, rot = 0, yOff = 0) {
+  const Y = (v) => (v === undefined || Math.abs(v) > 1e8 ? v : v + yOff);
   const c = Math.round(Math.cos(rot)), s = Math.round(Math.sin(rot));
   const W = (lx, lz) => [x + lx * c + lz * s, z - lx * s + lz * c];
   const R = (r) => {
@@ -356,22 +361,22 @@ export function register(info, x, z, rot = 0) {
   let lot = null;
   for (const r of info.solids || []) {
     const q = R(r);
-    colliders.add(q[0], q[1], q[2], q[3], r[4] ?? -1e9, r[5] ?? 1e9);
+    colliders.add(q[0], q[1], q[2], q[3], Y(r[4]) ?? -1e9, Y(r[5]) ?? 1e9, true);
     lot = lot ? [Math.min(lot[0], q[0]), Math.min(lot[1], q[1]), Math.max(lot[2], q[2]), Math.max(lot[3], q[3])] : q;
   }
   if (lot && info.lot !== false) colliders.addLot(lot[0], lot[1], lot[2], lot[3]);
   for (const r of info.decks || []) {
     const q = R(r);
-    addDeck(q[0], q[1], q[2], q[3], r[4]);
+    addDeck(q[0], q[1], q[2], q[3], r[4] + yOff);
   }
   for (const r of info.ramps || []) {
     const q = R(r), lo = W(r[0], r[1]), hi = r[4] === 'x' ? W(r[2], r[1]) : W(r[0], r[3]);
     const ax = Math.abs(hi[0] - lo[0]) > Math.abs(hi[1] - lo[1]) ? 'x' : 'z';
     const asc = ax === 'x' ? hi[0] > lo[0] : hi[1] > lo[1];
-    addRamp(q[0], q[1], q[2], q[3], ax, asc ? r[5] : r[6], asc ? r[6] : r[5]);
+    addRamp(q[0], q[1], q[2], q[3], ax, (asc ? r[5] : r[6]) + yOff, (asc ? r[6] : r[5]) + yOff);
   }
   for (const r of info.ceils || []) {
     const q = R(r);
-    addCeil(q[0], q[1], q[2], q[3], r[4]);
+    addCeil(q[0], q[1], q[2], q[3], r[4] + yOff);
   }
 }

@@ -5,7 +5,8 @@ import { DecorSystem } from './decor.js';
 import { makeFigure, makePlayerAvatar, Crowd, poseHead } from '../world/figures.js';
 import { HOME, GATE, NODES, POIS, poi, route, nearestNode, groundY, blocked, inRailZone, surfaceAt, outOfBounds, districtAt, colliders, ceilAt } from '../world/layout.js';
 import { mainRiverSD, riverSD, RV } from '../world/river.js';
-import { Batch } from '../engine/batch.js';
+import { terrainH } from '../world/terrain.js';
+import { addRipple } from '../engine/ink.js';
 import { RNG, mulberry32, clamp, angDiff } from '../util.js';
 
 const SAVE_KEY = 'qingming.save.v1';
@@ -30,27 +31,6 @@ export class Game {
     this.camDist = 4.6;
     this.avatar = makePlayerAvatar(world.mats);
     scene.add(this.avatar);
-    // 泅水时的涟漪
-    this.ripples = [];
-    {
-      const rb = new Batch(), N = 30, P = [], I = [];
-      for (let i = 0; i <= N; i++) {
-        const a = (i / N) * Math.PI * 2;
-        P.push(Math.cos(a) * 0.94, 0, Math.sin(a) * 0.94, Math.cos(a), 0, Math.sin(a));
-        if (i < N) I.push(i * 2, i * 2 + 1, i * 2 + 2, i * 2 + 2, i * 2 + 1, i * 2 + 3);
-      }
-      rb.raw('flat', P, null, I, { color: [0.62, 0.68, 0.69], lw: 0, id: 5 / 255 });
-      const geo = rb.build(world.mats)[0].geometry;
-      for (let i = 0; i < 4; i++) {
-        const m = new THREE.Mesh(geo, world.mats.flat);
-        m.visible = false;
-        m.layers.set(1);
-        m.frustumCulled = false;
-        scene.add(m);
-        this.ripples.push({ m, t: 9 });
-      }
-      this.rippleT = 0;
-    }
     this.keys = {};
     this.npcs = new Map();
     for (const spec of world.npcs) {
@@ -747,6 +727,14 @@ export class Game {
         surf.y = (RV.WATER_Y - 0.4) * Math.max(0, -sdw / 1.25);
       }
     }
+    // 人在水里走动、泅水：隔一会儿荡开一圈波纹
+    if (riverSD(p.x, p.z) < -0.15 && p.y < RV.WATER_Y + 0.05) {
+      this._ripT = (this._ripT || 0) - dt * (Math.hypot(p.vx || 0, p.vz || 0) > 0.3 ? 1 : 0.25);
+      if (this._ripT <= 0) {
+        this._ripT = 0.42;
+        addRipple(p.x, p.z, Math.hypot(p.vx || 0, p.vz || 0) > 0.3 ? 1 : 0.5);
+      }
+    }
     const floatY = RV.WATER_Y - 1.08; // 泅水时脚底的高度：只露头肩
     if (surf.water) {
       if (p.y <= floatY + 0.05 || p.swim) {
@@ -872,19 +860,7 @@ export class Game {
       this._avLayer = lay;
       av.traverse((o) => o.layers.set(lay));
     }
-    // 涟漪
-    this.rippleT -= dt;
-    if (p.swim && this.rippleT <= 0) {
-      this.rippleT = sp > 0.5 ? 0.45 : 1.1;
-      const rp = this.ripples.reduce((a, c) => (c.t > a.t ? c : a));
-      rp.t = 0;
-      rp.m.position.set(p.x, RV.WATER_Y + 0.02, p.z);
-    }
-    for (const rp of this.ripples) {
-      rp.t += dt;
-      rp.m.visible = rp.t < 2;
-      if (rp.m.visible) rp.m.scale.setScalar(0.5 + rp.t * 1.5);
-    }
+    // 涟漪：水面着色里画（见上面的 addRipple），蹚水、泅水都有
 
     // 镜头
     if (this.view === 'tp') {
@@ -900,7 +876,7 @@ export class Game {
       // 沿途若被墙挡住，就把镜头拉近
       for (let t = 0.5; t <= this.camDist; t += 0.25) {
         const qx = this._ct.x + dx * t, qz = this._ct.z + dz * t, qy = ty + 0.3 + dy * t;
-        if (colliders.hit(qx, qz, 0.3, qy - 0.3, 0.5) || outOfBounds(qx, qz) || (qy < groundY(qx, qz) + 0.25 && p.y < 1.5)) break;
+        if (colliders.hit(qx, qz, 0.3, qy - 0.3, 0.5) || outOfBounds(qx, qz) || (qy < groundY(qx, qz) + 0.25 && p.y - terrainH(p.x, p.z) < 1.5)) break;
         dist = t;
       }
       this._cd = this._cd === undefined ? dist : dist < this._cd ? dist : this._cd + (dist - this._cd) * Math.min(1, dt * 5);
@@ -911,7 +887,7 @@ export class Game {
       if (Math.abs(cx - GATE.x) < GATE.halfX + 0.5 && Math.abs(cz) < GATE.pass && p.y < 6 * GATE.K) cy = Math.min(cy, 5.6 * GATE.K);
       // 屋内不穿顶棚、楼板
       cy = Math.min(cy, ceilAt(cx, cz, p.y) - 0.3, ceilAt(p.x, p.z, p.y) - 0.3);
-      cam.position.set(cx, Math.max(cy, (p.swim ? RV.WATER_Y : p.y > 1.5 ? p.y : groundY(cx, cz)) + 0.3), cz);
+      cam.position.set(cx, Math.max(cy, (p.swim ? RV.WATER_Y : p.y - terrainH(p.x, p.z) > 1.5 ? p.y : groundY(cx, cz)) + 0.3, terrainH(cx, cz) + 0.3), cz);
       cam.rotation.set(p.pitch, p.yaw, 0);
     } else {
       cam.position.set(p.x, p.y + 1.62 + bob, p.z);

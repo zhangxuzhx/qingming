@@ -11,6 +11,7 @@ import { buildObject } from '../engine/batch.js';
 import { figure, randomLook } from './figures.js';
 import { FACE } from '../engine/textures.js';
 import { meadow, vnoise } from './cover.js';
+import { terrainH } from './terrain.js';
 import { addBoat, rider } from './sections.js';
 
 const PI = Math.PI;
@@ -46,7 +47,7 @@ function pavilion(c, x, z, rot, o = {}) {
     solids.push([sx * hw - 0.24, -hd + 0.2, sx * hw + 0.24, hd - 0.3, 0, base + 0.6]);
     for (const sz of [-1, 1]) solids.push([sx * hw - 0.16, sz * hd - 0.16, sx * hw + 0.16, sz * hd + 0.16, 0, base + h]);
   }
-  register({ solids, decks: [[-hw - 0.55, -hd - 0.55, hw + 0.55, hd + 0.55, base]] }, x, z, rot);
+  register({ solids, decks: [[-hw - 0.55, -hd - 0.55, hw + 0.55, hd + 0.55, base]] }, x, z, rot, terrainH(x, z));
   return base;
 }
 // 白鹭：立在浅水里
@@ -108,7 +109,7 @@ function kite(c, x, z, dir, L, H, cols) {
       bb.quad('flag', a0, a1, [e[0] + 0.14, e[1], e[2]], e, { color: cols[2] || cols[0], windV: [0, 0, 1, 1], double: true, lw: 0.4 });
     }
   });
-  grp.position.set(x, 1.3, z);
+  grp.position.set(x, 1.3 + terrainH(x, z), z);
   c.scene.add(grp);
   const ph = rng.f(6.28);
   c.dynamic.push((t) => {
@@ -132,7 +133,7 @@ function swing(c, x, z, rot) {
     bb.place(0, -3.0, -0.04, 0, () => figure(bb, { ...randomLook(rng, 'woman'), robe: [0.96, 0.68, 0.66], pose: 'sit', prop: null, arms: 'reach' }));
   });
   grp.rotation.order = 'YXZ';
-  grp.position.set(x, 3.16, z);
+  grp.position.set(x, 3.16 + terrainH(x, z), z);
   grp.rotation.y = rot;
   c.scene.add(grp);
   c.dynamic.push((t) => {
@@ -149,7 +150,7 @@ function cropField(c, x, z, w, d, col, o = {}) {
     for (let px = x - w / 2 + 0.5; px < x + w / 2 - 0.3; px += rng.f(0.75, 1.05)) {
       if (colliders.hit(px, pz, 0.5, 0)) continue;
       c.chunk(px);
-      b.place(px, 0, pz + rng.f(-0.12, 0.12), 0, () => (col ? P.flowers(b, rng, [col[0] * rng.f(0.92, 1.05), col[1] * rng.f(0.92, 1.05), col[2]], o.s || rng.f(1, 1.3), 'crop') : P.grassTuft(b, rng, rng.f(0.7, 0.95), rng.f(0.86, 0.98))));
+      b.place(px, terrainH(px, pz), pz + rng.f(-0.12, 0.12), 0, () => (col ? P.flowers(b, rng, [col[0] * rng.f(0.92, 1.05), col[1] * rng.f(0.92, 1.05), col[2]], o.s || rng.f(1, 1.3), 'crop') : P.grassTuft(b, rng, rng.f(0.7, 0.95), rng.f(0.86, 0.98))));
     }
   }
 }
@@ -177,11 +178,11 @@ function springCountry(c) {
   colliders.add(398.1, -42.5, 399.1, -41.9);
   c.fence([[404, -43.4], [394, -43], [386.5, -42]]);
   c.fence([[404, -32.6], [392, -31.4], [385.4, -30.6]]);
-  c.at(383.6, -45.6, 0.3, () => {
+  c.at(390.6, -45.4, 0.3, () => {
     const id = b.nextId();
     for (let k = 0; k < 14; k++) b.rod('wood', [-0.9, 0.12 + (k % 5) * 0.2, -0.5 + Math.floor(k / 5) * 0.4 + (k % 2) * 0.1], [0.9, 0.12 + (k % 5) * 0.2, -0.5 + Math.floor(k / 5) * 0.4], 0.09, 0.08, 5, { color: k % 3 ? W_.wood : W_.pale, id, lw: 0.5 });
   });
-  colliders.add(382.6, -46.4, 384.6, -44.8);
+  colliders.add(389.6, -46.2, 391.6, -44.6, -1e9, 1.3);
   // 溪东路南一方油菜花，西南再一大方
   cropField(c, 394.5, -13, 17, 32, RAPE);
   cropField(c, 322, 22, 28, 22, RAPE);
@@ -606,8 +607,8 @@ export function groundCover(c) {
       if (riverSD(x, z) < 0.7 || onRoad(x, z, 0.4) || colliders.hit(x, z, 0.5)) continue;
       c.chunk(x);
       const r = rng.r();
-      if (r < 0.035 && m > 0.6) b.place(x, 0, z, 0, () => P.flowers(b, rng, rng.pick([PINK, PALE, PALE, [1.26, 1.1, 0.5]]), rng.f(0.6, 0.85)));
-      else b.place(x, 0, z, 0, () => P.grassTuft(b, rng, r > 0.92 ? rng.f(1.3, 1.8) : rng.f(0.8, 1.15), 0.9 + 0.14 * m));
+      if (r < 0.035 && m > 0.6) b.place(x, terrainH(x, z), z, 0, () => P.flowers(b, rng, rng.pick([PINK, PALE, PALE, [1.26, 1.1, 0.5]]), rng.f(0.6, 0.85)));
+      else b.place(x, terrainH(x, z), z, 0, () => P.grassTuft(b, rng, r > 0.92 ? rng.f(1.3, 1.8) : rng.f(0.8, 1.15), 0.9 + 0.14 * m));
     }
   // 芦苇：沿水边一段一段地长，码头、桥头、渡口让开
   CHANNELS.forEach((ch, ci) => {
@@ -632,6 +633,45 @@ export function groundCover(c) {
       }
     }
   });
+}
+
+// 灌木、竹丛、落花：把屋后、篱边、树下这些边角填起来
+export function greenery(c) {
+  const { b } = c, rng = new RNG(4407);
+  // 屋后屋侧的灌木（临街的一面不种）
+  for (const h of c.MAP.houses.slice()) {
+    if (h.big || !rng.chance(0.62)) continue;
+    const cs = Math.cos(h.rot || 0), sn = Math.sin(h.rot || 0), n = rng.i(1, 3);
+    for (let k = 0; k < n; k++) {
+      let lx, lz;
+      if (rng.chance(0.55)) { lx = rng.f(-h.w / 2 + 0.6, h.w / 2 - 0.6); lz = -h.d / 2 - rng.f(0.1, 0.5); }
+      else { lx = rng.sign() * (h.w / 2 + rng.f(0.1, 0.5)); lz = rng.f(-h.d / 2 + 0.6, h.d / 2 - 1.6); }
+      c.bushAt(h.x + lx * cs + lz * sn, h.z - lx * sn + lz * cs, rng.f(0.8, 1.3));
+    }
+  }
+  // 树下偶尔一两丛
+  for (const t of c.MAP.trees.slice()) {
+    if (Math.abs(t.x) > 408 || Math.abs(t.z) > 112 || !rng.chance(0.22)) continue;
+    const a = rng.f(6.283), d = rng.f(1.3, 2.1);
+    c.bushAt(t.x + Math.cos(a) * d, t.z + Math.sin(a) * d, rng.f(0.7, 1.1));
+  }
+  // 竹丛：村舍屋后、寺后、茶棚边、堤尾
+  for (const [x, z, rx, rz, n] of [[358.8, -72.4, 3.6, 2.6, 26], [318.5, -71, 3, 3.8, 22], [-188, -50.5, 10, 2.6, 44], [212.5, -59, 4, 2.6, 20], [264.5, 75, 2.6, 3.4, 16], [-394.5, -72, 2.6, 4.5, 20]]) c.bambooAt(x, z, rx, rz, n);
+  // 花树下的落花：一地碎瓣
+  for (const t of c.MAP.trees) {
+    if (t.type !== 'blossom') continue;
+    c.chunk(t.x);
+    const th = terrainH(t.x, t.z);
+    b.place(t.x, th + 0.02, t.z, 0, () => {
+      const id = b.nextId();
+      for (let k = 0; k < 26; k++) {
+        const a = rng.f(6.283), d = Math.sqrt(rng.r()) * 2.9 * t.s, px = Math.cos(a) * d, pz = Math.sin(a) * d, w = rng.f(0.05, 0.1), yaw = rng.f(3.14), cx = Math.cos(yaw) * w, sz = Math.sin(yaw) * w;
+        if (riverSD(t.x + px, t.z + pz) < 0.3) continue;
+        const py = terrainH(t.x + px, t.z + pz) - th; // 每一瓣落在它自己脚下的地面上
+        b.quad('flat', [px - cx, py, pz - sz], [px + sz, py, pz - cx], [px + cx, py, pz + sz], [px - sz, py, pz + cx], { color: rng.pick([PINK, PINK, PALE]), lw: 0, id });
+      }
+    });
+  }
 }
 
 export function buildScenery(c) {

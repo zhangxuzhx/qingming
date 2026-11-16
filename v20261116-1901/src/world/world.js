@@ -6,6 +6,7 @@ import { inkMat, groundMat, waterMat, shared } from '../engine/ink.js';
 import { SignAtlas, mkCanvas, toTex } from '../engine/textures.js';
 import { RV, riverSD, CHANNELS } from './river.js';
 import { meadow } from './cover.js';
+import { terrainH, T_RECT, T_STEP, T_NX, T_NZ, T_GRID } from './terrain.js';
 import { WORLD, ROAD_HW, EAST_Z, NODES, EDGES, EXTRA_ROADS, edgeWidth, onRoad, colliders, groundY, HOME, GATE, register } from './layout.js';
 import * as P from './parts.js';
 import { figure, randomLook } from './figures.js';
@@ -13,7 +14,8 @@ import { buildSections } from './sections.js';
 
 const W_ = P.W_;
 // 供小地图/舆图绘制的记录
-export const MAP = { houses: [], trees: [], piers: [], fields: [], boats: [], walls: [] };
+// people / props：每个站着的人、每件摆设落在哪（审查位置与碰撞用）
+export const MAP = { houses: [], trees: [], piers: [], fields: [], boats: [], walls: [], people: [], props: [] };
 
 function makeMaterials(tex, atlas) {
   const D = THREE.DoubleSide;
@@ -113,6 +115,39 @@ function makeSplat() {
   return t;
 }
 
+// 辅图：R 灯笼的光晕（夜里映在地上墙上），G 墙根（屋基外一圈），B 树下
+function makeAux() {
+  const Wp = 1024, sx = Wp / (WORLD.maxX - WORLD.minX), Hp = Math.round((WORLD.maxZ - WORLD.minZ) * sx);
+  const c = mkCanvas(Wp, Hp), ctx = c.getContext('2d');
+  const X = (x) => (x - WORLD.minX) * sx, Z = (z) => (z - WORLD.minZ) * sx;
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, Wp, Hp);
+  ctx.globalCompositeOperation = 'lighter';
+  if ('filter' in ctx) ctx.filter = 'blur(2.2px)';
+  ctx.fillStyle = 'rgb(0,215,0)';
+  for (const h of MAP.houses) {
+    ctx.save();
+    ctx.translate(X(h.x), Z(h.z));
+    ctx.rotate(-(h.rot || 0));
+    ctx.fillRect((-h.w / 2 - 0.5) * sx, (-h.d / 2 - 0.5) * sx, (h.w + 1) * sx, (h.d + 1) * sx);
+    ctx.restore();
+  }
+  if ('filter' in ctx) ctx.filter = 'none';
+  const blob = (x, z, r, col, a) => {
+    const g = ctx.createRadialGradient(X(x), Z(z), 0, X(x), Z(z), r * sx);
+    g.addColorStop(0, `rgba(${col},${a})`);
+    g.addColorStop(0.55, `rgba(${col},${a * 0.45})`);
+    g.addColorStop(1, `rgba(${col},0)`);
+    ctx.fillStyle = g;
+    ctx.fillRect(X(x - r), Z(z - r), 2 * r * sx, 2 * r * sx);
+  };
+  for (const t of MAP.trees) blob(t.x, t.z, (t.type === 'blossom' ? 2.6 : t.type === 'willow' ? 3.6 : 3.2) * t.s, '0,0,255', 0.8);
+  for (const [x, z, s] of P.LAMPS) blob(x, z, 4.0 + 1.8 * s, '255,0,0', 0.3);
+  const t = toTex(c, { repeat: false, mip: true });
+  t.flipY = false;
+  return t;
+}
+
 export function buildWorld(scene, tex) {
   const atlas = new SignAtlas();
   const mats = makeMaterials(tex, atlas);
@@ -131,12 +166,21 @@ export function buildWorld(scene, tex) {
     home: null,
     criers: [], // 吆喝点
     at(x, z, rot, fn, y = 0) {
+      if (x || z) MAP.props.push([x, z, y + terrainH(x, z), String(fn).replace(/\s+/g, ' ').slice(0, 64)]);
       chunk(x);
-      b.place(x, y, z, rot, fn);
+      b.place(x, y + terrainH(x, z), z, rot, fn);
     },
     person(x, z, yaw, look, y) {
       chunk(x);
       const py = y ?? groundY(x, z);
+      for (let k = 0; k < 8; k++) {
+        const q = MAP.people.find((o) => Math.abs(o[2] - py) < 1 && Math.hypot(o[0] - x, o[1] - z) < 0.5);
+        if (!q) break;
+        const a = Math.hypot(x - q[0], z - q[1]) > 0.02 ? Math.atan2(z - q[1], x - q[0]) : k * 2.4;
+        x = q[0] + Math.cos(a) * 0.58;
+        z = q[1] + Math.sin(a) * 0.58;
+      }
+      MAP.people.push([x, z, py]);
       b.place(x, py, z, yaw, () => figure(b, look || randomLook(rng)));
       // 站着的人也是障碍：主角与行人都得绕着走，不从人身上穿过去
       colliders.add(x - 0.23, z - 0.23, x + 0.23, z + 0.23, py - 0.2, py + 1.7);
@@ -151,7 +195,7 @@ export function buildWorld(scene, tex) {
       chunk(x);
       const tr = new RNG(rng.i(1, 999999999));
       let dim;
-      b.place(x, 0, z, tr.f(6.28), () => (dim = P.tree(b, tr, type, s)));
+      b.place(x, terrainH(x, z), z, tr.f(6.28), () => (dim = P.tree(b, tr, type, s)));
       // 碰撞盒照着看得见的树干来（根部鼓出的那一截）
       const cr = Math.max(0.24, dim.r * 1.12);
       if (solid) colliders.add(x - cr, z - cr, x + cr, z + cr);
@@ -162,12 +206,32 @@ export function buildWorld(scene, tex) {
       if (riverSD(x, z) < 0.3 || onRoad(x, z, 0.3)) return;
       chunk(x);
       const tr = new RNG(rng.i(1, 999999999));
-      b.place(x, 0, z, 0, () => P.grassTuft(b, tr, s));
+      b.place(x, terrainH(x, z), z, 0, () => P.grassTuft(b, tr, s));
+    },
+    // 灌木：只种在墙根、篱边、树下这些不碍走路的地方；也挡人（膝盖高，跳得过去）
+    bushAt(x, z, s = 1, key) {
+      if (onRoad(x, z, 0.9) || riverSD(x, z) < 1.0 || colliders.hit(x, z, 0.5 * s, 0)) return false;
+      chunk(x);
+      const tr = new RNG(rng.i(1, 999999999));
+      b.place(x, terrainH(x, z), z, tr.f(6.28), () => P.bush(b, tr, s, key || tr.pick(['leafA', 'leafB', 'leafA'])));
+      colliders.add(x - 0.42 * s, z - 0.42 * s, x + 0.42 * s, z + 0.42 * s, -1e9, 1.05 * s);
+      return true;
+    },
+    // 竹丛：在一个椭圆里插 n 竿
+    bambooAt(x, z, rx, rz, n) {
+      const tr = new RNG(rng.i(1, 999999999));
+      for (let i = 0; i < n; i++) {
+        const a = tr.f(6.283), d = Math.sqrt(tr.r()), px = x + Math.cos(a) * rx * d, pz = z + Math.sin(a) * rz * d;
+        if (onRoad(px, pz, 1.0) || riverSD(px, pz) < 1.2 || colliders.hit(px, pz, 0.3, 0)) continue;
+        chunk(px);
+        b.place(px, terrainH(px, pz), pz, 0, () => P.bamboo(b, tr, tr.f(0.85, 1.15)));
+        colliders.add(px - 0.1, pz - 0.1, px + 0.1, pz + 0.1);
+      }
     },
     // 篱笆：画出来，也挡人
     fence(pts, h) {
       chunk(pts[0][0]);
-      b.place(0, 0, 0, 0, () => P.fence(b, pts, h));
+      b.place(0, 0, 0, 0, () => P.fence(b, pts, h, terrainH));
       for (let i = 0; i < pts.length - 1; i++) {
         const [ax, az] = pts[i], [bx, bz] = pts[i + 1], n = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 0.5));
         for (let k = 0; k <= n; k++) {
@@ -196,7 +260,11 @@ export function buildWorld(scene, tex) {
     houseAt(x, z, rot, o) {
       chunk(x);
       let info;
-      b.place(x, 0, z, rot, () => {
+      const hy = terrainH(x, z);
+      b.place(x, hy, z, rot, () => {
+        // 不在平地上的房子：屋基往下接一截，低的那一头不悬空
+        const sw = Math.abs(Math.sin(rot)) > 0.5, ex = (sw ? o.d : o.w) / 2, ez = (sw ? o.w : o.d) / 2;
+        if (Math.max(...[[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([i, j]) => Math.abs(terrainH(x + i * ex, z + j * ez) - hy))) > 0.06) b.box('stone', 0, -0.75, 0, o.w + 0.9, 1.5, o.d + 0.9, {});
         info = P.house(b, { rng, ...o });
         const y0 = info.y0, hd = o.d / 2;
         if (o.keeper !== false && (o.kind === 'shop' || o.keeper)) {
@@ -216,12 +284,12 @@ export function buildWorld(scene, tex) {
       });
       // 墙、地面、顶棚逐件登记：屋子进得去
       if (info.keeperLocal && o.keeper !== 'npc') info.solids.push([info.keeperLocal[0] - 0.28, info.keeperLocal[1] - 0.28, info.keeperLocal[0] + 0.28, info.keeperLocal[1] + 0.28]);
-      register(info, x, z, rot);
+      register(info, x, z, rot, hy);
       MAP.houses.push({ x, z, w: o.w + 1.3, d: o.d + 1.9, rot, thatch: o.roofMat === 'thatch' });
       // 把掌柜位置换算为世界坐标
       if (info.keeperLocal) {
         const [lx, lz] = info.keeperLocal, c = Math.cos(rot), s = Math.sin(rot);
-        info.keeper = { x: x + lx * c + lz * s, z: z - lx * s + lz * c, yaw: rot, y: info.y0 };
+        info.keeper = { x: x + lx * c + lz * s, z: z - lx * s + lz * c, yaw: rot, y: info.y0 + hy };
       }
       return info;
     },
@@ -274,7 +342,11 @@ export function buildWorld(scene, tex) {
       if (kind === 'shop' || kind === 'tea') {
         const text = kind === 'tea' ? rng.pick(['茶', '茶坊', '分茶', '香饮子']) : rng.pick(SHOP_SIGNS);
         const sx = cx + rng.sign() * (w / 2 - 0.4);
-        if (rng.chance(0.5)) ctx.at(sx, zFront + sdir * (awn ? awn + 0.3 : 0.9), (-sdir * Math.PI) / 2, () => P.banner(b, atlas, text, 0, 0, 0, { h: rng.f(5.6, 7) }));
+        if (rng.chance(0.5)) {
+          const zb = zFront + sdir * (awn ? awn + 0.3 : 0.9);
+          ctx.at(sx, zb, (-sdir * Math.PI) / 2, () => P.banner(b, atlas, text, 0, 0, 0, { h: rng.f(5.6, 7) }));
+          colliders.add(sx - 0.13, zb - 0.13, sx + 0.13, zb + 0.13); // 幌竿也挡人
+        }
         else ctx.at(sx, zFront + sdir * 0.75, Math.PI / 2, () => P.vSign(b, atlas, text, 0, 2.9, 0, Math.min(2.2, 0.6 + text.length * 0.5)));
       }
       if ((kind === 'shop' || kind === 'tea') && rng.chance(0.55)) {
@@ -300,6 +372,7 @@ export function buildWorld(scene, tex) {
       }
       if (rng.chance(0.4)) {
         const jx = cx + rng.sign() * (w / 2 - 0.9), jz = zFront + sdir * 0.5;
+        colliders.add(jx - 0.8, jz - 0.42, jx + 0.8, jz + 0.42, -1e9, 1.2); // 门前的瓮、麻包、筐
         ctx.at(jx, jz, 0, () => {
           const k = rng.i(0, 2);
           if (k === 0) for (let i = 0; i < 3; i++) P.jar(b, i * 0.5 - 0.5, 0, rng.f(-0.1, 0.1), rng.f(0.9, 1.2));
@@ -363,10 +436,35 @@ export function buildWorld(scene, tex) {
 
   // ── 地表与水面 ──
   const splat = makeSplat();
+  shared.tAux.value = makeAux();
+  shared.uAuxRect.value.set(WORLD.minX, WORLD.minZ, WORLD.maxX - WORLD.minX, WORLD.maxZ - WORLD.minZ);
   mats.ground = groundMat(splat, tex.groundDetail, [WORLD.minX, WORLD.minZ, WORLD.maxX - WORLD.minX, WORLD.maxZ - WORLD.minZ]);
   const gb = new Batch();
   const E = 5000;
-  gb.quad('ground', [-E, 0, E], [E, 0, E], [E, 0, -E], [-E, 0, -E]);
+  // 地表：地形表覆盖的范围里是随地势起伏的网格（顶点高度取自同一张表），范围外四块平地接出去
+  {
+    const W1 = T_NX + 1, ROWS = 30;
+    for (let j0 = 0; j0 < T_NZ; j0 += ROWS) {
+      const j1 = Math.min(T_NZ, j0 + ROWS), P0 = [], N0 = [], I0 = [];
+      for (let j = j0; j <= j1; j++)
+        for (let i = 0; i <= T_NX; i++) {
+          const k = j * W1 + i, h = T_GRID[k];
+          const hx = (T_GRID[j * W1 + Math.min(T_NX, i + 1)] - T_GRID[j * W1 + Math.max(0, i - 1)]) / (2 * T_STEP);
+          const hz = (T_GRID[Math.min(T_NZ, j + 1) * W1 + i] - T_GRID[Math.max(0, j - 1) * W1 + i]) / (2 * T_STEP);
+          const l = Math.hypot(hx, 1, hz);
+          P0.push(T_RECT.x0 + i * T_STEP, h, T_RECT.z0 + j * T_STEP);
+          N0.push(-hx / l, 1 / l, -hz / l);
+        }
+      for (let j = 0; j < j1 - j0; j++)
+        for (let i = 0; i < T_NX; i++) {
+          const a = j * W1 + i, bq = a + 1, c = a + W1, d = c + 1;
+          I0.push(a, c, d, a, d, bq);
+        }
+      gb.raw('ground', P0, null, I0, { normals: N0 });
+    }
+    const { x0, z0, x1, z1 } = T_RECT;
+    for (const [ax, az, bx, bz] of [[-E, -E, E, z0], [-E, z1, E, E], [-E, z0, x0, z1], [x1, z0, E, z1]]) gb.quad('ground', [ax, 0, bz], [bx, 0, bz], [bx, 0, az], [ax, 0, az]);
+  }
   gb.quad('water', [-E, RV.WATER_Y, E], [E, RV.WATER_Y, E], [E, RV.WATER_Y, -E], [-E, RV.WATER_Y, -E]);
   for (const m of gb.build(mats, scene)) {
     m.frustumCulled = false;
@@ -407,13 +505,15 @@ export function buildWorld(scene, tex) {
   cgeo.setAttribute('position', new THREE.BufferAttribute(seeds, 3));
   const catkinMat = new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3,
-    uniforms: { uTime: shared.uTime, uResY: shared.uResY, uCam: { value: new THREE.Vector3() }, uShow: { value: 1 } },
+    uniforms: { uTime: shared.uTime, uResY: shared.uResY, uCam: { value: new THREE.Vector3() }, uShow: { value: 1 }, uFly: { value: 0 } },
     vertexShader: /* glsl */ `
       uniform float uTime;
       uniform float uResY;
       uniform vec3 uCam;
       uniform float uShow;
+      uniform float uFly;
       varying float vK;
+      varying float vB;
       void main(){
         vec3 box = vec3(44.0, 13.0, 44.0), s = position;
         vec3 p = s * box;
@@ -421,20 +521,27 @@ export function buildWorld(scene, tex) {
         p.z -= uTime * 0.3 + cos(uTime*0.5 + s.x*37.0) * 0.9;
         p.xz = mod(p.xz - uCam.xz + box.xz*0.5, box.xz) - box.xz*0.5 + uCam.xz;
         p.y = 0.2 + mod(s.y*box.y - uTime*(0.22 + s.x*0.2) + sin(uTime*0.9 + s.y*50.0)*0.25, box.y);
+        // 入夜换成萤火：贴着草尖飞，一明一灭
+        p.y = mix(p.y, 0.3 + mod(s.y*2.4 + sin(uTime*0.5 + s.x*31.0)*0.5, 2.4), uFly);
+        vB = smoothstep(0.1, 0.5, sin(uTime*(1.3 + s.z*1.6) + s.x*50.0));
         vec4 mv = viewMatrix * vec4(p, 1.0);
         gl_Position = projectionMatrix * mv;
-        gl_PointSize = uShow * clamp(mix(0.035, 0.075, s.z) * projectionMatrix[1][1] * uResY * 0.5 / max(0.3, -mv.z), 1.2, uResY * 0.006);
+        gl_PointSize = uShow * mix(1.0, 1.5, uFly) * clamp(mix(0.035, 0.075, s.z) * projectionMatrix[1][1] * uResY * 0.5 / max(0.3, -mv.z), 1.2, uResY * 0.006);
         vK = s.x;
       }`,
     fragmentShader: /* glsl */ `
       layout(location = 0) out highp vec4 gColor;
       layout(location = 1) out highp vec4 gNormal;
       varying float vK;
+      varying float vB;
+      uniform float uFly;
       void main(){
         vec2 d = gl_PointCoord - 0.5;
         if(dot(d, d) > 0.2) discard;
-        // 落花粉白，柳絮雪白
+        if(uFly > 0.5 && (vB < 0.05 || vK > 0.45)) discard;
+        // 落花粉白，柳絮雪白；夜里是萤火的黄绿
         vec3 col = vK > 0.72 ? vec3(1.2, 0.97, 0.97) : vec3(1.22, 1.21, 1.17);
+        col = mix(col, vec3(1.25, 1.25, 0.55) * vB, uFly);
         gColor = vec4(col * 0.8, 1.0);
         gNormal = vec4(0.5, 0.5, 0.0, 0.0);
       }`,
@@ -456,6 +563,7 @@ export function buildWorld(scene, tex) {
       t += dt;
       farGroup.position.set(cam.position.x, 0, cam.position.z);
       catkinMat.uniforms.uCam.value.copy(cam.position);
+      catkinMat.uniforms.uFly.value += ((shared.uLamp.value > 0.7 ? 1 : 0) - catkinMat.uniforms.uFly.value) * Math.min(1, dt * 0.8);
       // 柳絮只在人眼的高度看得见；镜头升到高处（卷首俯瞰、留影）就收起来，否则成了地上一片乱闪的白点
       catkinMat.uniforms.uShow.value += ((this.indoor || cam.position.y > 16 ? 0 : 1) - catkinMat.uniforms.uShow.value) * Math.min(1, dt * 3);
       for (const c of chunks) c.m.visible = Math.abs(c.cx - cam.position.x) < this.viewDist;

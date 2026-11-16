@@ -247,8 +247,11 @@ export function basket(b, x, y, z, s = 1, fill) {
 export function crate(b, x, y, z, s = 1) {
   b.box('wood', x, y + 0.3 * s, z, 0.7 * s, 0.6 * s, 0.5 * s, { color: W_.pale });
 }
+// 每盏灯笼在世界里的位置（夜里往地上、墙上映光用）
+export const LAMPS = [];
 export function lantern(b, x, y, z, s = 1) {
-  const id = b.nextId();
+  const id = b.nextId(), e = b.M.elements;
+  LAMPS.push([e[0] * x + e[4] * y + e[8] * z + e[12], e[2] * x + e[6] * y + e[10] * z + e[14], s]);
   b.cyl('lamp', x, y - 0.5 * s, z, 0.16 * s, 0.1 * s, 0.14 * s, 8, { color: [1.08, 0.36, 0.27], id });
   b.cyl('lamp', x, y - 0.36 * s, z, 0.1 * s, 0.16 * s, 0.14 * s, 8, { color: [1.2, 0.5, 0.33], id });
   b.box('flat', x, y - 0.11 * s, z, 0.02, 0.22 * s, 0.02, { color: [0.3, 0.25, 0.2], lw: 0.5 });
@@ -957,6 +960,26 @@ export function grassTuft(b, rng, s = 1, tone = 1) {
     return [0.68 * g * y, 0.81 * g, 0.51 * g * (2 - y)];
   });
 }
+// 灌木：贴地的一团叶子，长在墙根、篱边、树下
+export function bush(b, rng, s = 1, key = 'leafA') {
+  const fid = b.nextId(), C = [0, 0.15 * s, 0], n = rng.i(5, 7);
+  for (let k = 0; k < n; k++) {
+    const a = (k / n) * 6.283 + rng.f(0.6), r = rng.f(0.12, 0.5) * s, w = rng.f(0.95, 1.4) * s, g = rng.f(0.76, 1.0), hue = rng.f(0.95, 1.06);
+    leafCard(b, key, [Math.cos(a) * r, rng.f(0.36, 0.78) * s, Math.sin(a) * r], w, w, rng.f(Math.PI), rng.f(-0.5, 0.5), C, { color: [g * hue, g, g * (2 - hue) * 0.97], windV: [0.03, 0.03, 0.16, 0.16], lw: 0.2, id: fid });
+  }
+}
+// 竹：一竿青竹，梢头几簇叶往下披
+export function bamboo(b, rng, s = 1) {
+  const H = rng.f(5.2, 7.6) * s, r = rng.f(0.036, 0.052) * s, lean = [rng.f(-0.55, 0.55) * s, rng.f(-0.55, 0.55) * s], id = b.nextId(), fid = b.nextId();
+  const col = [rng.f(0.58, 0.7), rng.f(0.74, 0.84), rng.f(0.46, 0.56)];
+  const at = (t) => [lean[0] * t * t, H * t, lean[1] * t * t];
+  for (let k = 0; k < 6; k++) b.rod('flat', at(k / 6), at((k + 1) / 6), r * (1 - 0.08 * k), r * (1 - 0.08 * (k + 1)), 5, { color: col, id, lw: 0.4 });
+  const C = at(0.78);
+  for (let k = 0; k < 6; k++) {
+    const p = at(rng.f(0.55, 1.0)), a = rng.f(6.283), d = rng.f(0.2, 0.8) * s, w = rng.f(1.3, 1.9) * s, g = rng.f(0.84, 1.04);
+    leafCard(b, 'leafB', [p[0] + Math.cos(a) * d, p[1] - rng.f(0, 0.4), p[2] + Math.sin(a) * d], w, w * 0.8, rng.f(Math.PI), rng.f(-0.4, 0.4), [C[0], C[1] - 1.5, C[2]], { color: [g, g * 1.08, g * 0.8], windV: [0.2, 0.2, 0.5, 0.5], lw: 0.2, id: fid });
+  }
+}
 // 芦苇、蒲草：水边一丛丛高出人膝，梢头随风
 export function reed(b, rng, s = 1) {
   const id = b.nextId(), n = rng.i(2, 3), yaw = rng.f(Math.PI);
@@ -1419,15 +1442,18 @@ export function well(b) {
   b.rod('wood', [-0.95, 2.0, 0], [0.95, 2.0, 0], 0.06, 0.06, 6, { color: W_.dark, id });
   b.cyl('wood', 0.5, 0.6, 0.6, 0.16, 0.13, 0.3, 8, { color: W_.wood });
 }
-export function fence(b, pts, h = 0.95) {
+export function fence(b, pts, h = 0.95, yAt = () => 0) {
   const id = b.nextId();
   for (let i = 0; i < pts.length - 1; i++) {
     const p = pts[i], q = pts[i + 1], len = Math.hypot(q[0] - p[0], q[1] - p[1]), n = Math.max(1, Math.round(len / 1.4));
+    let prev = null;
     for (let k = 0; k <= n; k++) {
-      const x = p[0] + ((q[0] - p[0]) * k) / n, z = p[1] + ((q[1] - p[1]) * k) / n;
-      b.cyl('wood', x, 0, z, 0.03, 0.045, h + (k % 2) * 0.1, 4, { color: W_.dark, id });
+      const x = p[0] + ((q[0] - p[0]) * k) / n, z = p[1] + ((q[1] - p[1]) * k) / n, y = yAt(x, z);
+      b.cyl('wood', x, y - 0.15, z, 0.03, 0.045, h + 0.15 + (k % 2) * 0.1, 4, { color: W_.dark, id });
+      // 横杆一段一段跟着桩子走，坡上不至于悬空或入地
+      if (prev) for (const yy of [h * 0.4, h * 0.8]) b.beam('wood', [prev[0], prev[1] + yy, prev[2]], [x, y + yy, z], 0.04, 0.04, { color: W_.wood, id });
+      prev = [x, y, z];
     }
-    for (const yy of [h * 0.4, h * 0.8]) b.beam('wood', [p[0], yy, p[1]], [q[0], yy, q[1]], 0.04, 0.04, { color: W_.wood, id });
   }
 }
 export function haystack(b) {
