@@ -602,6 +602,10 @@ void main(){
   // 波面：两层随流而动的细浪
   vec2 q1 = vec2(sf*0.06, st.y*0.19), q2 = vec2(sf*0.17 + 0.3, st.y*0.52 - uTime*0.03);
   vec2 g = (texture(tNoise, q1).rg - 0.5) + (texture(tNoise, q2).gb - 0.5) * 0.7;
+  // 离岸多远（自岸壁入水处算起，米）。贴着岸的一段水是静的：浪若一直晃到岸根，远看分不清是水在动还是岸线在抖
+  float off = -riverSD(p) - (st.z < 5.0 ? 0.95 : 0.42);
+  float still = 0.12 + 0.88 * smoothstep(0.1, 3.0, off);
+  g *= still;
   float calm = 1.0 - smoothstep(30.0, 160.0, vZ) * 0.6;
   vec3 N = normalize(vec3(g.x * 0.3 * calm, 1.0, g.y * 0.3 * calm));
   vec3 V = normalize(cameraPosition - vWorld);
@@ -615,7 +619,7 @@ void main(){
   vec3 refl = skyColor(R);
   if(uReflOn > 0.5){
     vec4 rp = uReflMat * vec4(vWorld, 1.0);
-    vec2 ruv = rp.xy / rp.w + g * (0.02 + 0.5 / (vZ + 12.0));
+    vec2 ruv = rp.xy / rp.w + g * (0.004 + 0.55 / (vZ + 12.0));
     vec4 rf = texture(tRefl, ruv);
     refl = mix(refl, rf.rgb / PIG, rf.a);
   }
@@ -627,11 +631,11 @@ void main(){
   float w = st.y*1.1 + sin(sf*0.2 + n1*6.2831)*0.9 + n2*2.2;
   float lv = abs(fract(w) - 0.5);
   float line = 1.0 - smoothstep(0.02, 0.03 + fwidth(w)*1.2, lv);
-  line *= smoothstep(0.42, 0.66, texture(tNoise, vec2(sf*0.019 + 0.7, st.y*0.055 + 0.2)).r) * (1.0 - smoothstep(25.0, 140.0, vZ));
+  line *= smoothstep(0.42, 0.66, texture(tNoise, vec2(sf*0.019 + 0.7, st.y*0.055 + 0.2)).r) * (1.0 - smoothstep(25.0, 140.0, vZ)) * smoothstep(0.5, 2.6, off);
   col = mix(col, col * vec3(0.5, 0.56, 0.6), line * 0.4);
-  // 岸边一线白水
-  float edgeN = texture(tNoise, vec2(sf * 0.09, st.y * 0.6) + uTime * 0.02).b;
-  col = mix(col, vec3(1.0, 1.01, 0.98), smoothstep(-0.5 - edgeN * 0.5, -0.04, riverSD(p)) * 0.3);
+  // 岸根的水：压一层沉着的暗色（岸的影与倒影），越贴岸越深，纹丝不动——这一带把“岸”与“水”分开
+  float shore = 1.0 - smoothstep(0.0, 2.6, off);
+  col *= mix(vec3(1.0), vec3(0.6, 0.68, 0.71), shore * shore * 0.85 + (1.0 - smoothstep(0.0, 0.45, off)) * 0.15);
   // 涉水荡开的波纹：两三道细细的墨圈往外走，越走越淡（和水面上别的水纹一个笔调）
   float rip = 0.0;
   for(int i = 0; i < 6; i++){

@@ -3,7 +3,7 @@
 // 人文的：牧童指路、秋千、清明上坟、寺院钟亭香炉、扳罾打鱼、街上的灯彩与三三两两的活计。
 // 原画里没有、此番入画所添的，都放在主街走向之外，不动原画的布局。
 import { RNG } from '../util.js';
-import { RV, riverSD, CHANNELS } from './river.js';
+import { RV, riverSD, riverHW, CHANNELS, bankHeight } from './river.js';
 import { ROAD_HW, EAST_Z, BRIDGE, PLANK, DYKE, onRoad, colliders, register } from './layout.js';
 import * as P from './parts.js';
 import { column } from './timber.js';
@@ -19,11 +19,8 @@ const PI = Math.PI;
 const WHITE = [1.14, 1.14, 1.1];
 const RAPE = [1.3, 1.14, 0.34], PINK = [1.22, 0.86, 0.9], PALE = [1.2, 1.18, 1.1];
 const MONK = { robe: [0.84, 0.7, 0.5], trim: [0.5, 0.4, 0.3], face: FACE.man3, hat: 'none', arms: 'tuck', prop: null };
-// 岸坡上某处的地面高（水线以下顺坡而下）
-const bankY = (x, z) => {
-  const sd = riverSD(x, z);
-  return sd < 0 ? (RV.WATER_Y - 0.4) * Math.min(1, -sd / 1.25) : 0;
-};
+// 岸边某处的地面高（岸壁陡降到水面，再往里是浅滩）
+const bankY = (x, z) => bankHeight(riverSD(x, z), riverHW(x, z));
 
 // ───────────────────────── 小件 ─────────────────────────
 // 亭：四柱，攒尖或歇山顶，三面坐凳；上得去

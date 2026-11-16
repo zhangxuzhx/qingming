@@ -4,7 +4,7 @@ import { CAPACITY, SELL_MARKUP, START_CAPITAL, GOODS, DECOR, QUESTS, TALK } from
 import { DecorSystem } from './decor.js';
 import { makeFigure, makePlayerAvatar, Crowd, poseHead } from '../world/figures.js';
 import { HOME, GATE, NODES, POIS, poi, route, nearestNode, groundY, blocked, inRailZone, surfaceAt, outOfBounds, districtAt, colliders, ceilAt } from '../world/layout.js';
-import { mainRiverSD, riverSD, RV } from '../world/river.js';
+import { mainRiverSD, riverSD, riverHW, bankOf, bankHeight, RV } from '../world/river.js';
 import { terrainH } from '../world/terrain.js';
 import { addRipple, markDynamic } from '../engine/ink.js';
 import { RNG, mulberry32, clamp, angDiff } from '../util.js';
@@ -719,12 +719,13 @@ export class Game {
     }
     // 起落与泅水
     const surf = surfaceAt(p.x, p.z, p.y);
-    // 岸坡：近岸一米多水不深，踩得到底——下水是蹚下去的，上岸是踩着坡走上来的，不是从岸里“钻”出来
+    // 近岸：脚下的高照岸的断面走（与画出来的岸一致）——岸顶是平的，过了沿口顺着岸壁下到水面，再往里一米是没膝的浅滩，
+    // 踩得到底；再远才是深水。下水是蹚下去的，上岸是踩着岸壁走上来的，不是从岸里“钻”出来
     if (surf.water) {
-      const sdw = riverSD(p.x, p.z);
-      if (sdw > -1.25) {
+      const sdw = riverSD(p.x, p.z), hw = riverHW(p.x, p.z);
+      if (sdw > bankOf(hw).foot - 1) {
         surf.water = false;
-        surf.y = (RV.WATER_Y - 0.4) * Math.max(0, -sdw / 1.25);
+        surf.y = bankHeight(sdw, hw);
       }
     }
     // 人在水里走动、泅水：隔一会儿荡开一圈波纹
