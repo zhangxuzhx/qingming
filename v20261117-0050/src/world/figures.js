@@ -18,6 +18,8 @@ const BL = [0, 0, 0.5, 1.5], BLV = [0.5, 1.5];
 const TAU = Math.PI * 2, X_AXIS = [1, 0, 0], Z_AXIS = [0, 0, 1];
 // 身量（米，立姿）：头心、肩、腰、胯、膝
 const HY = 1.548, SHY = 1.335, WAIST = 1.0, HIP = 0.86, KNEE = 0.47;
+// 主角骨架的几个尺寸（avatar.js 反解腿用）：胯高、膝高、上身转轴的高、胯宽的一半
+export const RIG = { HIP, KNEE, PY: 1.15, HIPX: 0.085 };
 const _sc = new THREE.Matrix4(), _m1 = new THREE.Matrix4(), _m2 = new THREE.Matrix4(), _e = new THREE.Euler();
 const _up = new THREE.Matrix4(), _hd = new THREE.Matrix4(), _v1 = new THREE.Vector3(), _q1 = new THREE.Quaternion(), Y_AXIS = new THREE.Vector3(0, 1, 0);
 // 最近立的那个人：头的坐标系（相对其脚下）与活气的节拍——给单独成组的头用
@@ -727,7 +729,7 @@ export function poseHead(hd, track, dt) {
 
 // 主角：圆领窄摆的长袍、乌靴、幞头。上身、袍摆、两臂两腿各带关节，行走、跃起、泅水时可动
 export function makePlayerAvatar(mats) {
-  const ROBE = [0.8, 0.86, 0.9], PANTS = [1.04, 1.02, 0.96], HEM = 0.3, PY = 1.15, SHX = 0.158;
+  const ROBE = [0.8, 0.86, 0.9], PANTS = [1.04, 1.02, 0.96], HEM = 0.3, PY = RIG.PY, SHX = 0.158;
   const look = { robe: ROBE, trim: [0.56, 0.62, 0.68], belt: [0.26, 0.25, 0.27], face: FACE.man, hat: 'futou', arms: 'none', noSkirt: true, noTails: true, staticLegs: false, lod: 0, neutral: true, lean: 0 };
   const q = quirks(look);
   const pivot = new THREE.Group(); // 以胸口为轴：泅水时前倾
@@ -742,13 +744,27 @@ export function makePlayerAvatar(mats) {
     parent.add(g);
     return g;
   };
-  const upper = add(pivot, 0, -PY, 0, (b) => figure(b, look));
+  const upper = add(pivot, 0, -PY, 0, (b) => figure(b, { ...look, noHead: true }));
+  // 头单独成组：身子前倾、拧转时头能端平，还能朝人、朝镜头看的方向转过去
+  const hg = new THREE.Group();
+  HEAD_FRAME.decompose(hg.position, hg.quaternion, hg.scale);
+  hg.position.y -= PY;
+  hg.userData.q0 = hg.quaternion.clone();
+  LOD = 0;
+  FACE_ID = FACE.man;
+  SKIN = skinOf(FACE.man);
+  for (const m of part(mats, (b) => {
+    b.push(_m1.makeTranslation(0, 0.09, 0.008));
+    head(b, look, FACE.man, false, b.nextId());
+    b.pop();
+  })) hg.add(m);
+  pivot.add(hg);
   // 袍摆自腰带垂下，另成一件，迈步时随之张合
   const skirt = add(pivot, 0, WAIST - PY, 0, (b) =>
     loft(b, M, [[HEM - WAIST, 0.2, 0.172, 0, 0.62, 0.9], [(HEM - WAIST) * 0.72, 0.193, 0.163, 0.002, 0.9, 0.94], [(HEM - WAIST) * 0.42, 0.178, 0.146, 0.004, 0.6, 0.97], [0.012, 0.154, 0.116, 0.004, 0.08]].map(ringOf(0)), { color: ROBE, id: b.nextId(), folds: mkFolds(q, 8, 0.07, 0.15, 0.3, 0.6, 3), seg: 22 })
   );
-  // 幞头垂脚
-  const tails = add(pivot, 0, HY + 0.03 - PY, -0.114, (b) => {
+  // 幞头垂脚（挂在头上，随头转）
+  const tails = add(hg, 0, HY + 0.03 - PY - hg.position.y, -0.114 - hg.position.z, (b) => {
     const id = b.nextId();
     for (const sx of [-1, 1]) {
       bar(b, [sx * 0.028, 0, 0], [sx * 0.07, -0.13, -0.044], 0.034, 0.008, GAUZE, id);
@@ -782,7 +798,7 @@ export function makePlayerAvatar(mats) {
   const [legL, shinL] = mkLeg(-1), [legR, shinR] = mkLeg(1);
   const grp = new THREE.Group();
   grp.add(pivot);
-  grp.userData = { pivot, upper, skirt, tails, armL, foreL, armR, foreR, legL, shinL, legR, shinR };
+  grp.userData = { pivot, upper, head: hg, skirt, tails, armL, foreL, armR, foreR, legL, shinL, legR, shinR };
   return grp;
 }
 

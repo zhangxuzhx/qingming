@@ -61,6 +61,7 @@ function boot() {
   const PHOTO_TIP = '留影 · W A S D 移动 · Q E 升降 · Shift 快些 · 滚轮 远近 · [ ] 调焦 · F 景深 · 回车 存图 · P 退出';
   // 景深的几档：平时走路是淡淡的一层（远处渐虚）；留影时可调焦，分 关 / 淡 / 浓
   const DOF_PLAY = { focus: 9, aper: 3.2, tol: 0.6, nearTol: 3.2, nearK: 1.2 };
+  const dofMix = (a, b, t) => ({ focus: a.focus + (b.focus - a.focus) * t, aper: a.aper + (b.aper - a.aper) * t, tol: a.tol + (b.tol - a.tol) * t, nearTol: a.nearTol + (b.nearTol - a.nearTol) * t, nearK: a.nearK + (b.nearK - a.nearK) * t });
   const DOF_TITLE = { focus: 118, aper: 3, tol: 0.3, nearTol: 0.45, nearK: 1 };
   const DOF_PHOTO = [{ aper: 0, tol: 0.3, nearTol: 0.5, nearK: 1, label: '关' }, { aper: 4, tol: 0.3, nearTol: 0.5, nearK: 1, label: '淡' }, { aper: 7.5, tol: 0.12, nearTol: 0.2, nearK: 1, label: '浓' }];
   const photoTip = document.createElement('div');
@@ -463,7 +464,7 @@ function boot() {
       ink.shadowRange = Math.min(120, 50 + photo.pos.y * 1.5);
       ink.shadowCenter.set(photo.pos.x - Math.sin(photo.yaw) * reach, 0, photo.pos.z - Math.cos(photo.yaw) * reach);
     } else if (game.mode === 'play') {
-      ink.shadowRange = coarse ? 44 : 56;
+      ink.shadowRange = (coarse ? 44 : 56) + 70 * (game.wide || 0); // 入画的摇臂镜头在高处：投影铺开些
       ink.shadowCenter.set(game.player.x - Math.sin(game.player.yaw) * 30, 0, game.player.z - Math.cos(game.player.yaw) * 30);
     } else {
       ink.shadowRange = 150;
@@ -472,7 +473,7 @@ function boot() {
     ink.expose += ((world.indoor && !photo.on && !dbg ? 1.36 : 1) - ink.expose) * Math.max(0, Math.min(1, raw * 2.5));
     // 景深：各档之间缓缓过渡
     {
-      const tg = photo.on ? { ...DOF_PHOTO[photo.dof], focus: photo.focus } : dbg ? { ...DOF_PLAY, focus: Math.max(9, Math.hypot(dbg.pos[0] - dbg.target[0], dbg.pos[1] - dbg.target[1], dbg.pos[2] - dbg.target[2]) * 0.6) } : game.mode === 'play' ? DOF_PLAY : DOF_TITLE;
+      const tg = photo.on ? { ...DOF_PHOTO[photo.dof], focus: photo.focus } : dbg ? { ...DOF_PLAY, focus: Math.max(9, Math.hypot(dbg.pos[0] - dbg.target[0], dbg.pos[1] - dbg.target[1], dbg.pos[2] - dbg.target[2]) * 0.6) } : game.mode === 'play' ? (game.talkE > 0 ? dofMix(DOF_PLAY, { focus: game.talkD, aper: 5.5, tol: 0.25, nearTol: 0.9, nearK: 1.2 }, game.talkE) : DOF_PLAY) : DOF_TITLE;
       const k = Math.max(0, Math.min(1, raw * 5));
       for (const key of ['focus', 'aper', 'tol', 'nearTol', 'nearK']) ink.dof[key] += (tg[key] - ink.dof[key]) * k;
     }

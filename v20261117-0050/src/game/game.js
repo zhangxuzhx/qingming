@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { CAPACITY, SELL_MARKUP, START_CAPITAL, GOODS, DECOR, QUESTS, TALK } from './data.js';
 import { DecorSystem } from './decor.js';
+import { AvatarAnim } from './avatar.js';
 import { makeFigure, makePlayerAvatar, Crowd, poseHead } from '../world/figures.js';
 import { HOME, GATE, NODES, POIS, poi, route, nearestNode, groundY, blocked, inRailZone, surfaceAt, outOfBounds, districtAt, colliders, ceilAt } from '../world/layout.js';
 import { mainRiverSD, riverSD, riverHW, bankOf, bankHeight, RV } from '../world/river.js';
@@ -10,6 +11,8 @@ import { addRipple, markDynamic } from '../engine/ink.js';
 import { RNG, mulberry32, clamp, angDiff } from '../util.js';
 
 const SAVE_KEY = 'qingming.save.v1';
+const _p1 = new THREE.Vector3(), _q1 = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _eu = new THREE.Euler(), _mt = new THREE.Matrix4(), _UP = new THREE.Vector3(0, 1, 0);
+const mixN = (a, b, t) => a + (b - a) * t;
 const START = { x: 401, z: -38, yaw: 1.5 };
 // 存档第 2 版：世界按原画重排并放大，坐标与旧档不通
 const HOME_SHIFT = [-138, -14];
@@ -31,6 +34,7 @@ export class Game {
     this.camDist = 4.6;
     this.avatar = makePlayerAvatar(world.mats);
     scene.add(markDynamic(this.avatar));
+    this.anim = new AvatarAnim(this.avatar);
     this.keys = {};
     this.npcs = new Map();
     for (const spec of world.npcs) {
@@ -113,6 +117,12 @@ export class Game {
     Object.assign(p, { x: pos.x, z: pos.z, yaw: pos.yaw, pitch: 0, vx: 0, vz: 0, vy: 0, y: groundY(pos.x, pos.z), ground: true, swim: false, face: pos.yaw + Math.PI });
     this.view = this.s.flags.view || 'tp';
     this.mode = 'play';
+    // 入画的头一个镜头：自身后高处摇下来，落到平常的机位（见 update 里“镜头”一节）
+    this._crane = { t: 0, T: 3.4 };
+    this._ct = null;
+    this._cd = undefined;
+    this._tk = 0;
+    this._tp = null;
     this.decor.sync(this.s.decor);
     this.district = '';
     this.refreshHud();
@@ -402,7 +412,37 @@ export class Game {
       () => this.onModal && this.onModal(false)
     );
   }
+  // 交谈时的机位：站到主角身后偏一侧、略高过肩，看对方的脸（稍稍带向两人之间）。哪一侧没有遮挡用哪一侧；
+  // 两侧都被墙、柱挡着就不换机位。返回 0~1 的过渡量
+  _talkCam(dt) {
+    const p = this.player, on = this.ui.dialogueOpen && this._talkId ? this.npcs.get(this._talkId) : null;
+    if (!this.ui.dialogueOpen) this._talkId = null;
+    if (on && !this._tp) {
+      const n = on.spec, ny = n.y ?? groundY(n.x, n.z), d = Math.hypot(p.x - n.x, p.z - n.z) || 1, ux = (p.x - n.x) / d, uz = (p.z - n.z) / d;
+      const L = new THREE.Vector3(n.x + ux * d * 0.2, ny + 1.4 * ((n.look && n.look.s) || 1), n.z + uz * d * 0.2);
+      this._tp = { none: true };
+      for (const sd of [1, -1]) {
+        const C = new THREE.Vector3(p.x + ux * 1.3 - uz * 0.85 * sd, Math.max(p.y, ny) + 1.62, p.z + uz * 1.3 + ux * 0.85 * sd);
+        let ok = !outOfBounds(C.x, C.z) && C.y < ceilAt(C.x, C.z, p.y) - 0.25 && C.y > terrainH(C.x, C.z) + 0.3;
+        for (let i = 1; ok && i <= 8; i++) {
+          const t = i / 8;
+          if (colliders.hit(mixN(L.x, C.x, t), mixN(L.z, C.z, t), 0.22, mixN(L.y, C.y, t) - 0.25, 0.5)) ok = false;
+        }
+        if (ok) {
+          this._tp = { C, L, d: C.distanceTo(L) };
+          break;
+        }
+      }
+    }
+    const active = on && this._tp && !this._tp.none;
+    this._tk = clamp((this._tk || 0) + dt * (active ? 1.5 : -2.4), 0, 1);
+    if (!on && this._tk <= 0) this._tp = null;
+    if (!this._tp || this._tp.none) return 0;
+    const u = this._tk;
+    return u * u * (3 - 2 * u);
+  }
   talk(id) {
+    this._talkId = id;
     const s = this.s, first = !s.met[id];
     s.met[id] = 1;
     if (id === 'wife') return this.talkWife();
@@ -640,12 +680,9 @@ export class Game {
     }
     {
       const k = this.keys, running = (k.ShiftLeft || k.ShiftRight || (this.move && Math.hypot(this.move.x, this.move.y) > 0.93)) && Math.hypot(p.vx, p.vz) > 5;
-      const want = running ? 67 : 62;
-      if (Math.abs(cam.fov - want) > 0.05) {
-        cam.fov += (want - cam.fov) * Math.min(1, dt * 4);
-        cam.updateProjectionMatrix();
-      }
+      this._fov = (this._fov || 62) + ((running ? 67 : 62) - (this._fov || 62)) * Math.min(1, dt * 4);
     }
+    this._landV = 0;
     const s = this.s;
     s.playtime += dt;
     // 行情更替、货价回稳
@@ -672,7 +709,8 @@ export class Game {
     const speed = (p.swim ? (run ? 3.3 : 2.3) : run ? 7.4 : 4.1) * (mag > 1 ? 1 / mag : 1);
     const fx = -Math.sin(p.yaw), fz = -Math.cos(p.yaw), rx = Math.cos(p.yaw), rz = -Math.sin(p.yaw);
     const tvx = (fx * f + rx * r) * speed, tvz = (fz * f + rz * r) * speed;
-    const acc = Math.min(1, dt * (p.swim ? 4 : p.ground ? 11 : 3));
+    // 起步稍缓、收步稍快：有点分量，又不拖泥带水
+    const acc = Math.min(1, dt * (p.swim ? 4 : p.ground ? (mag > 0 ? 9 : 12) : 3));
     p.vx += (tvx - p.vx) * acc;
     p.vz += (tvz - p.vz) * acc;
     const nx = p.x + p.vx * dt, nz = p.z + p.vz * dt;
@@ -769,6 +807,7 @@ export class Game {
         p.vy -= 22 * dt;
         p.y += p.vy * dt;
         if (p.y <= surf.y) {
+          this._landV = -p.vy;
           p.y = surf.y;
           p.vy = 0;
           p.ground = true;
@@ -778,121 +817,139 @@ export class Game {
     p.step += sp * dt * 1.9;
     const bob = p.ground ? Math.sin(p.step * Math.PI) * 0.028 * Math.min(1, sp / 4) : 0;
 
-    // 主角小像：行走摆臂、跃起、泅水
-    const av = this.avatar, ad = av.userData;
+    // 主角小像（动作见 avatar.js）
+    const av = this.avatar;
     if (this.view === 'tp') {
       if (sp > 0.4) p.face += angDiff(Math.atan2(p.vx, p.vz), p.face) * Math.min(1, dt * 10);
     } else p.face = p.yaw + Math.PI;
-    av.position.set(p.x, p.y + bob * 0.6, p.z);
+    const talkN = this.ui.dialogueOpen && this._talkId ? this.npcs.get(this._talkId) : null;
+    if (talkN && this.view === 'tp') p.face += angDiff(Math.atan2(talkN.spec.x - p.x, talkN.spec.z - p.z), p.face) * Math.min(1, dt * 6);
+    av.position.set(p.x, p.y, p.z);
     av.rotation.y = p.face;
-    // 步态另计相位：步频随速度略增，免得腿脚倒腾得太急
-    if (p.ground && !p.swim && sp > 0.3) p.gait = (p.gait || 0) + dt * Math.PI * 2 * (0.9 + sp * 0.22);
-    const amp = p.ground ? Math.min(1, sp / 2.2) : 0, runK = clamp((sp - 2.2) / 4.6, 0, 1);
-    const sw = Math.sin(p.gait || 0), cw = Math.cos(p.gait || 0);
-    if (!p.swim) av.position.y = p.y + Math.abs(cw) * 0.035 * amp * (1 + runK * 0.6);
-    const kk = Math.min(1, dt * 16);
-    const to = (o, ax, v) => { o.rotation[ax] += (v - o.rotation[ax]) * kk; };
-    let tilt = 0, twist = 0, lean = 0, breath = 0, skirtZ = 1, skirtX = 0, tail = 0.06;
-    if (p.swim) {
-      // 泅水：两臂轮番前划，两腿上下打水
-      tilt = 1.08;
-      const a = Math.sin(p.swimT * 4.2), q = Math.sin(p.swimT * 7);
-      to(ad.armL, 'x', -2.55 + a * 0.75);
-      to(ad.armR, 'x', -2.55 - a * 0.75);
-      to(ad.armL, 'z', -0.3);
-      to(ad.armR, 'z', 0.3);
-      to(ad.foreL, 'x', -0.2 - Math.max(0, a) * 0.5);
-      to(ad.foreR, 'x', -0.2 - Math.max(0, -a) * 0.5);
-      to(ad.legL, 'x', q * 0.3);
-      to(ad.legR, 'x', -q * 0.3);
-      to(ad.shinL, 'x', 0.2 + Math.max(0, -q) * 0.4);
-      to(ad.shinR, 'x', 0.2 + Math.max(0, q) * 0.4);
-      skirtZ = 1.2;
-      tail = 0.5;
-    } else if (!p.ground) {
-      // 跃起：一腿提膝，两臂张开
-      const up = p.vy > 0 ? 1 : 0.4;
-      to(ad.armL, 'x', -0.5 - up * 0.5);
-      to(ad.armR, 'x', -0.3 - up * 0.3);
-      to(ad.armL, 'z', -0.55);
-      to(ad.armR, 'z', 0.55);
-      to(ad.foreL, 'x', -0.6);
-      to(ad.foreR, 'x', -0.5);
-      to(ad.legL, 'x', -0.55 * up);
-      to(ad.shinL, 'x', 1.0 * up);
-      to(ad.legR, 'x', 0.3);
-      to(ad.shinR, 'x', 0.45);
-      skirtZ = 1.55;
-      tail = p.vy > 0 ? -0.3 : 0.9;
-      tilt = 0.06;
-    } else {
-      // 行走 / 疾行：腿前后摆，回摆的那条腿屈膝；臂与腿反向，跑起来肘弯得更深
-      const A = (0.34 + 0.3 * runK) * amp, B = (0.36 + 0.5 * runK) * amp;
-      this._idleT = (this._idleT || 0) + dt;
-      const breathe = Math.sin(this._idleT * 1.5) * 0.02 * (1 - amp);
-      to(ad.legL, 'x', -sw * A);
-      to(ad.legR, 'x', sw * A);
-      to(ad.shinL, 'x', (Math.max(0, cw) * (0.55 + 0.6 * runK) + 0.06) * amp);
-      to(ad.shinR, 'x', (Math.max(0, -cw) * (0.55 + 0.6 * runK) + 0.06) * amp);
-      to(ad.armL, 'x', sw * B + breathe);
-      to(ad.armR, 'x', -sw * B + breathe);
-      to(ad.armL, 'z', -0.1 - runK * 0.1);
-      to(ad.armR, 'z', 0.1 + runK * 0.1);
-      to(ad.foreL, 'x', -(0.12 + runK * 0.9 * amp + Math.max(0, -sw) * 0.25 * amp));
-      to(ad.foreR, 'x', -(0.12 + runK * 0.9 * amp + Math.max(0, sw) * 0.25 * amp));
-      tilt = (0.02 + runK * 0.15) * amp;
-      twist = sw * 0.07 * amp + Math.sin(this._idleT * 0.37) * 0.035 * (1 - amp);
-      lean = Math.sin(this._idleT * 0.46) * 0.012 * (1 - amp);
-      breath = Math.sin(this._idleT * 1.5) * 0.003 * (1 - amp);
-      skirtZ = 1 + Math.abs(sw) * (0.2 + 0.8 * runK) * amp;
-      skirtX = (runK * 0.1 + 0.02) * amp;
-      tail = 0.06 + runK * 0.55 * amp + Math.sin((p.gait || 0) * 2) * 0.05 * amp;
+    {
+      const fn = talkN || (this.focus && this.npcs.get(this.focus));
+      this.anim.update(dt, p, {
+        yaw: p.yaw,
+        pitch: p.pitch,
+        tp: this.view === 'tp',
+        look: fn ? { x: fn.spec.x, y: (fn.spec.y ?? groundY(fn.spec.x, fn.spec.z)) + 1.5, z: fn.spec.z } : null,
+        // 脚下那一处的地面（上台阶、上坡时脚各踩各的高度）
+        groundAt: (x, z) => {
+          const q = surfaceAt(x, z, p.y + 0.3);
+          return q.water ? p.y : q.y;
+        },
+      });
     }
-    to(ad.pivot, 'y', twist);
-    to(ad.pivot, 'z', lean);
-    ad.upper.scale.y = 1 + breath;
-    to(ad.skirt, 'x', skirtX);
-    to(ad.tails, 'x', tail);
-    ad.skirt.scale.z += (skirtZ - ad.skirt.scale.z) * kk;
-    ad.pivot.rotation.x += (tilt - ad.pivot.rotation.x) * Math.min(1, dt * 7);
     // 第一人称时小像只留影子（第 2 层：只投影不入画）
-    const lay = this.view === 'tp' && !(this._cd < 0.9) ? 0 : 2;
+    const lay = (this.view === 'tp' && !(this._cd < 0.9)) || (this._tk || 0) > 0.35 || this._crane ? 0 : 2;
     if (this._avLayer !== lay) {
       this._avLayer = lay;
       av.traverse((o) => o.layers.set(lay));
     }
     // 涟漪：水面着色里画（见上面的 addRipple），蹚水、泅水都有
 
-    // 镜头
+    // ── 镜头 ──
+    // 先算平常的机位（第三人称跟随 / 第一人称），再看要不要让给“入画”的摇臂镜头或交谈时的过肩镜头
+    let gx, gy, gz;
     if (this.view === 'tp') {
+      if (!this._ct || Math.hypot(this._ct.x - p.x, this._ct.z - p.z) > 6) this._ct = { x: p.x, y: p.y, z: p.z, vy: 0, side: 0, run: 0 };
+      const ct = this._ct, kf = Math.min(1, dt * 9);
       // 跟随点略带迟滞，转身起步更柔和
-      if (!this._ct || Math.hypot(this._ct.x - p.x, this._ct.z - p.z) > 6) this._ct = { x: p.x, y: p.y, z: p.z };
-      const kf = Math.min(1, dt * 9);
-      this._ct.x += (p.x - this._ct.x) * kf;
-      this._ct.z += (p.z - this._ct.z) * kf;
-      this._ct.y += (p.y - this._ct.y) * Math.min(1, dt * 6);
-      const cp = Math.cos(p.pitch), ty = this._ct.y + (p.swim ? 1.75 : 1.55);
+      ct.x += (p.x - ct.x) * kf;
+      ct.z += (p.z - ct.z) * kf;
+      // 竖直方向是一根带阻尼的弹簧：上下台阶不颠；落地时镜头跟着一沉再回上来
+      if (this._landV > 2) ct.vy -= Math.min(this._landV, 9) * 0.1;
+      for (let n = dt > 0.02 ? 2 : 1, h = dt / n, i = 0; i < n; i++) {
+        ct.vy += (81 * (p.y - ct.y) - 16.2 * ct.vy) * h;
+        ct.y += ct.vy * h;
+      }
+      const cp = Math.cos(p.pitch), ty = ct.y + (p.swim ? 1.75 : 1.55);
       const dx = Math.sin(p.yaw) * cp, dy = -Math.sin(p.pitch), dz = Math.cos(p.yaw) * cp; // 自目标指向镜头
+      // 肩位：镜头往右让出一拃，人站在画面中线偏左，正前方的景不被后脑勺挡着；右手边贴着墙、或镜头拉得很近时收回去
+      const sideOK = !colliders.hit(ct.x + rx * 0.55, ct.z + rz * 0.55, 0.25, ty - 0.3, 0.6);
+      ct.side += ((sideOK ? 0.34 : 0) * clamp(((this._cd ?? this.camDist) - 1.3) / 1.6, 0, 1) - ct.side) * Math.min(1, dt * 5);
+      const ox = ct.x + rx * ct.side, oz = ct.z + rz * ct.side;
+      // 跑起来镜头略往后撤
+      ct.run += (clamp((sp - 4.6) / 2.6, 0, 1) - ct.run) * Math.min(1, dt * 2.5);
+      const want = this.camDist * (1 + 0.14 * ct.run);
       let dist = 0.5;
       // 沿途若被墙挡住，就把镜头拉近
-      for (let t = 0.5; t <= this.camDist; t += 0.25) {
-        const qx = this._ct.x + dx * t, qz = this._ct.z + dz * t, qy = ty + 0.3 + dy * t;
-        if (colliders.hit(qx, qz, 0.3, qy - 0.3, 0.5) || outOfBounds(qx, qz) || (qy < groundY(qx, qz) + 0.25 && p.y - terrainH(p.x, p.z) < 1.5)) break;
+      for (let t = 0.5; t <= want; t += 0.25) {
+        const qx = ox + dx * t, qz = oz + dz * t, qy = ty + 0.3 + dy * t;
+        // 脚下是水的地方，“地面”按水面算（河床不在地形里，原先人一下水镜头就缩到贴脸）
+        const gq = riverSD(qx, qz) < 0 ? RV.WATER_Y : groundY(qx, qz);
+        if (colliders.hit(qx, qz, 0.3, qy - 0.3, 0.5) || outOfBounds(qx, qz) || (qy < gq + 0.25 && p.y - terrainH(p.x, p.z) < 1.5)) break;
         dist = t;
       }
       this._cd = this._cd === undefined ? dist : dist < this._cd ? dist : this._cd + (dist - this._cd) * Math.min(1, dt * 5);
       let cy = ty + 0.3 + dy * this._cd;
-      const cx = this._ct.x + dx * this._cd, cz = this._ct.z + dz * this._cd;
+      const cx = ox + dx * this._cd, cz = oz + dz * this._cd;
       // 屋内、门道内压低镜头，不穿梁顶
       if (Math.abs(cx - HOME.x) < HOME.hallW / 2 && Math.abs(cz - (HOME.z + HOME.hallZ)) < HOME.hallD / 2) cy = Math.min(cy, HOME.floorY + 3.3);
       if (Math.abs(cx - GATE.x) < GATE.halfX + 0.5 && Math.abs(cz) < GATE.pass && p.y < 6 * GATE.K) cy = Math.min(cy, 5.6 * GATE.K);
       // 屋内不穿顶棚、楼板
       cy = Math.min(cy, ceilAt(cx, cz, p.y) - 0.3, ceilAt(p.x, p.z, p.y) - 0.3);
-      cam.position.set(cx, Math.max(cy, (p.swim ? RV.WATER_Y : p.y - terrainH(p.x, p.z) > 1.5 ? p.y : groundY(cx, cz)) + 0.3, terrainH(cx, cz) + 0.3), cz);
-      cam.rotation.set(p.pitch, p.yaw, 0);
+      gx = cx;
+      gy = Math.max(cy, (p.swim ? RV.WATER_Y : p.y - terrainH(p.x, p.z) > 1.5 ? p.y : groundY(cx, cz)) + 0.3, terrainH(cx, cz) + 0.3);
+      gz = cz;
     } else {
-      cam.position.set(p.x, p.y + 1.62 + bob, p.z);
-      cam.rotation.set(p.pitch, p.yaw, 0);
+      gx = p.x;
+      gy = p.y + 1.62 + bob;
+      gz = p.z;
+    }
+    _p1.set(gx, gy, gz);
+    _q1.setFromEuler(_eu.set(p.pitch, p.yaw, 0, 'YXZ'));
+    let fov = this._fov || 62;
+    // 交谈：越过主角的肩头看对方，两人都在画里；说完推回原位
+    const te = this._talkCam(dt);
+    if (te > 0) {
+      const T = this._tp;
+      _p1.lerp(T.C, te);
+      _q1.slerp(_q2.setFromRotationMatrix(_mt.lookAt(T.C, T.L, _UP)), te);
+      fov = mixN(fov, 44, te);
+    }
+    this.talkE = te;
+    this.talkD = te > 0 ? this._tp.d : 0;
+    // 入画：自身后高处摇下来
+    if (this._crane) {
+      const c = this._crane;
+      if (!c.pos) {
+        if (ceilAt(p.x, p.z, p.y) < 1e8) this._crane = null; // 人在屋里：不摇
+        else {
+          const bx = Math.sin(p.yaw), bz = Math.cos(p.yaw);
+          for (const [D, H] of [[36, 26], [24, 17], [13, 9.5]]) {
+            const S = new THREE.Vector3(p.x + bx * D + rx * D * 0.22, p.y + H, p.z + bz * D + rz * D * 0.22);
+            let ok = S.y > terrainH(S.x, S.z) + 2;
+            // 这条下降的路上不能有屋宇、城墙挡着
+            for (let i = 0; ok && i <= 16; i++) {
+              const t = i / 16;
+              if (colliders.hit(mixN(S.x, gx, t), mixN(S.z, gz, t), 0.6, mixN(S.y, gy, t) - 0.6, 1.2)) ok = false;
+            }
+            if (ok) {
+              c.pos = S;
+              c.q = new THREE.Quaternion().setFromRotationMatrix(_mt.lookAt(S, _p1.clone().set(p.x - bx * 6, p.y + 1.2, p.z - bz * 6), _UP));
+              break;
+            }
+          }
+          if (!c.pos) this._crane = null;
+        }
+      }
+      if (this._crane) {
+        c.t += dt * (f || r ? 2.4 : 1); // 等不及就推一下摇杆，快些落下来
+        const u = clamp(c.t / c.T, 0, 1), e = u * u * u * (u * (u * 6 - 15) + 10);
+        _p1.set(mixN(c.pos.x, _p1.x, e), mixN(c.pos.y, _p1.y, e), mixN(c.pos.z, _p1.z, e));
+        _q1.copy(_q2.copy(c.q).slerp(_q1, e));
+        fov = mixN(40, fov, e);
+        this.wide = 1 - e;
+        if (u >= 1) this._crane = null;
+      }
+    }
+    if (!this._crane) this.wide = 0;
+    cam.position.copy(_p1);
+    cam.quaternion.copy(_q1);
+    if (Math.abs(cam.fov - fov) > 0.01) {
+      cam.fov = fov;
+      cam.updateProjectionMatrix();
     }
     cam.updateMatrixWorld();
 

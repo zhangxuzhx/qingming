@@ -4,7 +4,7 @@
 // 原画里没有、此番入画所添的，都放在主街走向之外，不动原画的布局。
 import { RNG } from '../util.js';
 import { RV, riverSD, riverHW, CHANNELS, bankHeight } from './river.js';
-import { ROAD_HW, EAST_Z, BRIDGE, PLANK, DYKE, onRoad, colliders, register } from './layout.js';
+import { ROAD_HW, EAST_Z, BRIDGE, PLANK, DYKE, onRoad, covered, colliders, register } from './layout.js';
 import * as P from './parts.js';
 import { column } from './timber.js';
 import { buildObject } from '../engine/batch.js';
@@ -602,7 +602,7 @@ export function groundCover(c) {
       if (m < 0.42 || rng.r() > (m - 0.3) * 2.4) continue;
       // 离路远的地方人不常到，草丛疏些（地上那层草色照旧）
       if (!onRoad(x, z, 24) && rng.r() > 0.4) continue;
-      if (riverSD(x, z) < 0.7 || onRoad(x, z, 0.4) || colliders.hit(x, z, 0.5)) continue;
+      if (riverSD(x, z) < 0.7 || onRoad(x, z, 0.4) || colliders.hit(x, z, 0.5) || covered(x, z)) continue; // 桥面、栈台、亭台底下不长
       c.chunk(x);
       const r = rng.r();
       if (r < 0.035 && m > 0.6) b.place(x, terrainH(x, z), z, 0, () => P.flowers(b, rng, rng.pick([PINK, PALE, PALE, [1.26, 1.1, 0.5]]), rng.f(0.6, 0.85)));
@@ -664,7 +664,7 @@ export function greenery(c) {
       const id = b.nextId();
       for (let k = 0; k < 26; k++) {
         const a = rng.f(6.283), d = Math.sqrt(rng.r()) * 2.9 * t.s, px = Math.cos(a) * d, pz = Math.sin(a) * d, w = rng.f(0.05, 0.1), yaw = rng.f(3.14), cx = Math.cos(yaw) * w, sz = Math.sin(yaw) * w;
-        if (riverSD(t.x + px, t.z + pz) < 0.3) continue;
+        if (riverSD(t.x + px, t.z + pz) < 0.3 || covered(t.x + px, t.z + pz, 0.2)) continue;
         const py = terrainH(t.x + px, t.z + pz) - th; // 每一瓣落在它自己脚下的地面上
         b.quad('flat', [px - cx, py, pz - sz], [px + sz, py, pz - cx], [px + cx, py, pz + sz], [px - sz, py, pz + cx], { color: rng.pick([PINK, PINK, PALE]), lw: 0, id });
       }

@@ -7,7 +7,7 @@ import { SignAtlas, mkCanvas, toTex } from '../engine/textures.js';
 import { RV, riverSD, CHANNELS, bankOf } from './river.js';
 import { meadow, vnoise } from './cover.js';
 import { terrainH, T_RECT, T_STEP, T_NX, T_NZ, T_GRID } from './terrain.js';
-import { WORLD, ROAD_HW, EAST_Z, NODES, EDGES, EXTRA_ROADS, BRIDGE, edgeWidth, onRoad, colliders, groundY, HOME, GATE, register } from './layout.js';
+import { WORLD, ROAD_HW, EAST_Z, NODES, EDGES, EXTRA_ROADS, BRIDGE, edgeWidth, onRoad, covered, colliders, groundY, HOME, GATE, register } from './layout.js';
 import * as P from './parts.js';
 import { figure, randomLook } from './figures.js';
 import { buildSections } from './sections.js';
@@ -204,14 +204,14 @@ export function buildWorld(scene, tex) {
       return true;
     },
     grassAt(x, z, s = 1) {
-      if (riverSD(x, z) < 0.3 || onRoad(x, z, 0.3)) return;
+      if (riverSD(x, z) < 0.3 || onRoad(x, z, 0.3) || covered(x, z)) return;
       chunk(x);
       const tr = new RNG(rng.i(1, 999999999));
       b.place(x, terrainH(x, z), z, 0, () => P.grassTuft(b, tr, s));
     },
     // 灌木：只种在墙根、篱边、树下这些不碍走路的地方；也挡人（膝盖高，跳得过去）
     bushAt(x, z, s = 1, key) {
-      if (onRoad(x, z, 0.9) || riverSD(x, z) < 1.0 || colliders.hit(x, z, 0.5 * s, 0)) return false;
+      if (onRoad(x, z, 0.9) || riverSD(x, z) < 1.0 || colliders.hit(x, z, 0.5 * s, 0) || covered(x, z, 0.6)) return false;
       chunk(x);
       const tr = new RNG(rng.i(1, 999999999));
       b.place(x, terrainH(x, z), z, tr.f(6.28), () => P.bush(b, tr, s, key || tr.pick(['leafA', 'leafB', 'leafA'])));
@@ -223,7 +223,7 @@ export function buildWorld(scene, tex) {
       const tr = new RNG(rng.i(1, 999999999));
       for (let i = 0; i < n; i++) {
         const a = tr.f(6.283), d = Math.sqrt(tr.r()), px = x + Math.cos(a) * rx * d, pz = z + Math.sin(a) * rz * d;
-        if (onRoad(px, pz, 1.0) || riverSD(px, pz) < 1.2 || colliders.hit(px, pz, 0.3, 0)) continue;
+        if (onRoad(px, pz, 1.0) || riverSD(px, pz) < 1.2 || colliders.hit(px, pz, 0.3, 0) || covered(px, pz)) continue;
         chunk(px);
         b.place(px, terrainH(px, pz), pz, 0, () => P.bamboo(b, tr, tr.f(0.85, 1.15)));
         colliders.add(px - 0.1, pz - 0.1, px + 0.1, pz + 0.1);
