@@ -580,6 +580,7 @@ export class UI {
   // ── 画卷大地图 ──
   openMap(g, onPick, onClose) {
     this.mapOpen = true;
+    this.root.classList.add('mapopen'); // 展卷时把底下的罗盘、摇杆、按钮都收起来，免得透出来搅在一起
     this._mapClose = onClose;
     const el = this.$('#bigmap');
     el.classList.remove('hidden');
@@ -590,7 +591,8 @@ export class UI {
       const isP = tab === 'painting';
       el.innerHTML = `<div class="bar"><h2>清明上河圖</h2>
           <div class="tabs"><button class="tab ${isP ? 'on' : ''}" data-tab="painting">原画</button><button class="tab ${isP ? '' : 'on'}" data-tab="map">舆图</button></div>
-          <div class="info">拖拽或滚轮横向展卷　·　点击榜题可设为指引　·　M / Esc 收卷</div></div>
+          <div class="info">${this.touch ? '左右拖动展卷　·　点榜题可设为指引' : '拖拽或滚轮横向展卷　·　点击榜题可设为指引　·　M / Esc 收卷'}</div>
+          <button class="mclose" data-k="KeyM">收卷</button></div>
         <div class="rail"><div class="roller"></div><div class="sheet"></div><div class="roller"></div></div>
         <div class="legend"><span>朱框：画中原有　｜　虚框：此番入画所添　｜　朱底：当前去处</span><span>${isP ? '北宋 张择端《清明上河图》故宫博物院藏本 · 两端为题跋与裱边' : '舆图依画中世界实测绘成'}</span></div>`;
       const sheet = el.querySelector('.sheet'), rail = el.querySelector('.rail');
@@ -679,6 +681,7 @@ export class UI {
   closeMap() {
     if (!this.mapOpen) return;
     this.mapOpen = false;
+    this.root.classList.remove('mapopen');
     this.$('#bigmap').classList.add('hidden');
     if (this._mapClose) this._mapClose();
   }

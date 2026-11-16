@@ -649,7 +649,7 @@ export class Game {
     const p = this.player, ui = this.ui, cam = this.camera;
     if (this.mode !== 'play') {
       // 卷首：自右向左缓缓展卷的俯瞰
-      this.cine -= dt * 5.5;
+      this.cine -= dt * 2.4; // 展卷要慢：走快了，枝叶细线一帧挪好几个像素，满眼都在闪
       if (this.cine < -372) this.cine = 372;
       cam.fov = 34;
       cam.position.set(this.cine, 52, 96);

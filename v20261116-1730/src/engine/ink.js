@@ -284,6 +284,8 @@ uniform float uShade;
 uniform float uGhost;
 uniform float uWash;
 uniform float uBump;
+uniform vec2 uFadeD;
+uniform vec2 uInkD;
 void main(){
   if(uReflPass > 0.5 && vWorld.y < uWaterY - 0.04) discard;
   vec3 n = normalize(vNw);
@@ -303,6 +305,11 @@ void main(){
   #endif
   #ifdef ALPHATEST
   if(tex.a < 0.42) discard;
+  #endif
+  #ifdef FADE
+  // 远处的草丛一丛一丛地隐去（按世界里的格子取散列，镜头移动时不会忽隐忽现）：
+  // 远了每丛只剩几个像素，留着只会随镜头移动闪个不停；地上那层草色照旧
+  if(fract(sin(dot(floor(vObj.xz / 1.3), vec2(12.9898, 78.233))) * 43758.5453) < smoothstep(uFadeD.x, uFadeD.y, vZ)) discard;
   #endif
   if(uShadowPass > 0.5){
     gColor = vec4(1.0);
@@ -356,7 +363,12 @@ void main(){
   #ifdef FLAT_N
   gNormal = vec4(0.5, 0.5, vInk.y, vInk.x);
   #else
-  gNormal = vec4(nv.xy*0.5+0.5, vInk.y, vInk.x);
+  float lw = vInk.y;
+  #ifdef INKFADE
+  // 细碎的东西远了不勾线
+  lw *= 1.0 - smoothstep(uInkD.x, uInkD.y, vZ);
+  #endif
+  gNormal = vec4(nv.xy*0.5+0.5, lw, vInk.x);
   #endif
 }
 `;
@@ -525,6 +537,8 @@ export function inkMat(o = {}) {
   if (o.weather) defines.WEATHER = '';
   if (o.leaf) defines.LEAF = '';
   if (o.life) defines.LIFE = '';
+  if (o.fade) defines.FADE = '';
+  if (o.inkFade) defines.INKFADE = '';
   const m = new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3,
     defines,
@@ -537,6 +551,8 @@ export function inkMat(o = {}) {
       uGhost: { value: 0 },
       uWash: { value: o.wash ?? 0.3 },
       uBump: { value: o.bump ?? 0 },
+      uFadeD: { value: new THREE.Vector2(...(o.fade || [1e6, 2e6])) },
+      uInkD: { value: new THREE.Vector2(...(o.inkFade || [1e6, 2e6])) },
     },
     vertexShader: VS,
     fragmentShader: FS,
@@ -643,7 +659,9 @@ void main(){
   // 以整像素对称取样：平面上的深度二阶差分严格为零，不受掠射角影响
   ivec2 res = ivec2(uRes);
   ivec2 ip = clamp(ivec2(uv * uRes), ivec2(0), res - 1);
-  int r = max(1, int(uLine * sc * press + 0.5));
+  // 线宽取定值：若随纸上的“笔压”一块粗一块细，景物一动，线过了分界就突然变粗变细，看着像在抖。
+  // 提按改由墨色浓淡来表现（见下）
+  int r = max(1, int(uLine * sc + 0.5));
   ivec2 oA = ivec2(r, r), oC = ivec2(-r, r);
   #define FD(o) texelFetch(tDepth, clamp(ip + (o), ivec2(0), res - 1), 0).x
   #define FN(o) texelFetch(tNormal, clamp(ip + (o), ivec2(0), res - 1), 0)
@@ -891,8 +909,9 @@ export class InkRenderer {
     const r = (this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false, depth: false, stencil: false, powerPreference: 'high-performance', preserveDrawingBuffer: false }));
     r.outputColorSpace = THREE.LinearSRGBColorSpace;
     r.autoClear = false;
-    this.pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
-    this.maxPixels = 4.6e6; // 画面像素上限，超大屏幕上自动降一点渲染分辨率
+    // 至少按 1.5 倍像素来画，再由浏览器缩回去：墨线是贴着像素格子走的，格子细了，线随镜头移动时一跳才半个像素，也不那么硬
+    this.pixelRatio = Math.min(Math.max(window.devicePixelRatio || 1, 1.5), 2);
+    this.maxPixels = 6.2e6; // 画面像素上限，超大屏幕上自动降一点渲染分辨率
     this.reflect = reflect;
     this.fx = fx;
     const depthTexture = new THREE.DepthTexture(4, 4);

@@ -98,3 +98,17 @@
 #ui:not(.touch) #mini-wrap { position: absolute; left: 30px; bottom: 60px; }
 #ui:not(.touch) #purse { position: absolute; right: 26px; top: 22px; }
 #ui:not(.touch) #hints { left: 270px; right: 270px; }
+
+/* ── 画卷大地图：收卷的按钮（触屏上没有 M / Esc，全靠它） ── */
+#bigmap .mclose { pointer-events: auto; cursor: pointer; flex: none; padding: 6px 22px; min-height: 40px; border: 1.2px solid #eadfc4; background: #eadfc4; color: var(--ink); font-family: inherit; font-size: 19px; letter-spacing: 0.3em; text-indent: 0.3em; }
+#bigmap .mclose:active { background: #cdb98f; border-color: #cdb98f; }
+#ui.mapopen #hud { visibility: hidden; }
+/* 触屏上按钮放大到手指点得准（界面整体按屏幕缩过，这里的数是缩放前的） */
+#ui.touch #bigmap .mclose { min-height: 68px; padding: 8px 30px; font-size: 24px; }
+#ui.touch #bigmap .tab { padding: 14px 24px; font-size: 22px; }
+#ui.narrow #bigmap .bar { flex-wrap: wrap; gap: 8px 12px; padding: 12px 14px 8px; }
+#ui.narrow #bigmap .bar h2 { font-size: 28px; flex: 1 1 100%; }
+#ui.narrow #bigmap .tabs { margin-left: 0; }
+#ui.narrow #bigmap .info { display: none; }
+#ui.narrow #bigmap .mclose { margin-left: auto; }
+#ui.narrow #bigmap .legend { flex-direction: column; gap: 4px; padding: 6px 14px 12px; font-size: 14px; }

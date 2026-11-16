@@ -17,7 +17,7 @@ export const MAP = { houses: [], trees: [], piers: [], fields: [], boats: [], wa
 
 function makeMaterials(tex, atlas) {
   const D = THREE.DoubleSide;
-  const leaf = (map) => inkMat({ map, alphaTest: true, wind: true, side: D, shade: 0.82, wash: 0.16, leaf: true });
+  const leaf = (map, x) => inkMat({ map, alphaTest: true, wind: true, side: D, shade: 0.82, wash: 0.16, leaf: true, ...x });
   return {
     flat: inkMat({ side: D }),
     plaster: inkMat({ map: tex.plaster, world: true, scale: 0.22, side: D, tint: [1.23, 1.22, 1.18], weather: true, bump: 0.004 }),
@@ -49,9 +49,11 @@ function makeMaterials(tex, atlas) {
     leafC: leaf(tex.leafC),
     blossom: leaf(tex.blossom),
     pine: leaf(tex.pine),
-    grass: leaf(tex.grass),
-    grassLow: leaf(tex.grassLow),
-    flower: leaf(tex.flower),
+    // 草、花：远了整丛隐去、不勾线（fade / inkFade 是起止距离，米）；成片的菜花留到很远
+    grass: leaf(tex.grass, { fade: [75, 135], inkFade: [22, 60] }),
+    grassLow: leaf(tex.grassLow, { fade: [34, 74], inkFade: [9, 28] }),
+    flower: leaf(tex.flower, { fade: [38, 82], inkFade: [9, 28] }),
+    crop: leaf(tex.flower, { inkFade: [12, 36] }),
     // 灯笼：自己发亮，不随日照明暗——黄昏里是一点暖色
     lamp: inkMat({ side: D, shade: 0, wash: 0 }),
     far: inkMat({ noFog: true, flatN: true, side: D, shade: 0, wash: 0.15 }),
@@ -336,7 +338,7 @@ export function buildWorld(scene, tex) {
   // ── 静态网格 ──
   const statics = b.build(mats, scene);
   const chunks = [], rooms = [];
-  const NO_SHADOW = new Set(['rafter', 'eave', 'lattice', 'sign', 'signWind', 'stone', 'grass', 'grassLow', 'flower', 'bank']);
+  const NO_SHADOW = new Set(['rafter', 'eave', 'lattice', 'sign', 'signWind', 'stone', 'grass', 'grassLow', 'flower', 'crop', 'bank']);
   for (const m of statics) {
     m.matrixAutoUpdate = false;
     m.updateMatrix();
@@ -454,7 +456,8 @@ export function buildWorld(scene, tex) {
       t += dt;
       farGroup.position.set(cam.position.x, 0, cam.position.z);
       catkinMat.uniforms.uCam.value.copy(cam.position);
-      catkinMat.uniforms.uShow.value += ((this.indoor ? 0 : 1) - catkinMat.uniforms.uShow.value) * Math.min(1, dt * 3);
+      // 柳絮只在人眼的高度看得见；镜头升到高处（卷首俯瞰、留影）就收起来，否则成了地上一片乱闪的白点
+      catkinMat.uniforms.uShow.value += ((this.indoor || cam.position.y > 16 ? 0 : 1) - catkinMat.uniforms.uShow.value) * Math.min(1, dt * 3);
       for (const c of chunks) c.m.visible = Math.abs(c.cx - cam.position.x) < this.viewDist;
       for (const c of rooms) c.m.visible = Math.abs(c.x - cam.position.x) < 82 && Math.abs(c.z - cam.position.z) < 82;
       for (const d of dynamic) d(t, dt);

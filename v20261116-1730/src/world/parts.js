@@ -964,8 +964,8 @@ export function reed(b, rng, s = 1) {
   }
 }
 // 花丛：col 是花色（油菜的黄、野花的粉与白）
-export function flowers(b, rng, col, s = 1) {
-  rosette(b, 'flower', 3, 1.25 * s, 0.7 * s, [0.42], rng, { windV: [0, 0, 0.14, 0.14], lw: 0.05 }, () => col);
+export function flowers(b, rng, col, s = 1, key = 'flower') {
+  rosette(b, key, 3, 1.25 * s, 0.7 * s, [0.42], rng, { windV: [0, 0, 0.14, 0.14], lw: 0.05 }, () => col);
 }
 
 // ───────────────────────── 漕船 ─────────────────────────
