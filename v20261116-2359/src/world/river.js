@@ -45,6 +45,21 @@ export const CHANNELS = [
 ];
 export const channel = (id) => CHANNELS.find((c) => c.id === id);
 
+// 岸的断面（以到河道边线的距离计，岸上为正、水里为负）：岸顶平着探出一点，沿口一道深色的边，底下是陡立的岸壁，直插进水里。
+// 岸壁要陡：俯瞰时才看得出“这是岸、底下是水”；缓坡远看只是一条土色的带子，像路沿，水一晃就像路沿在抖。
+// top 岸顶接地面处；lip 沿口；edge 沿口那道边的外缘；foot 岸壁入水处；under 水下收口
+export const BANK = { top: 0.1, lip: -0.12, edge: -0.19, foot: -0.42, under: -0.6 };
+// 小溪两岸挨得近，陡壁立着像条沟：仍用缓坡（只是照样有沿口那道边、坡面上干下湿）
+const BANK_SLOPE = { top: 0.1, lip: -0.1, edge: -0.17, foot: -0.95, under: -1.3 };
+export const bankOf = (hw) => (hw < 5 ? BANK_SLOPE : BANK);
+// 岸边某处的地面高（sd 即 riverSD）：岸顶为 0，岸壁陡降到水面，再往里是一段浅滩
+export function bankHeight(sd, hw = RV.HW) {
+  const B = bankOf(hw);
+  if (sd >= B.edge) return 0;
+  if (sd >= B.foot) return (RV.WATER_Y * (B.edge - sd)) / (B.edge - B.foot);
+  return RV.WATER_Y - Math.min(0.35, (B.foot - sd) * 0.35);
+}
+
 // ── 网格：每格一米 ──
 export const RIVER_RECT = { x0: -480, z0: -230, w: 1000, h: 470 };
 const GW = RIVER_RECT.w, GH = RIVER_RECT.h, FAR = 60;
@@ -79,6 +94,8 @@ function sample(A, x, z) {
 }
 // 到最近一条河岸的有向距离（<0 在水中）
 export const riverSD = (x, z) => sample(SD, x, z);
+// 所在河道的半宽
+export const riverHW = (x, z) => sample(HWV, x, z);
 // 该处水流的方向（单位向量，指向下游）
 export function flowAt(x, z) {
   const dx = sample(DX, x, z), dz = sample(DZ, x, z), l = Math.hypot(dx, dz) || 1;

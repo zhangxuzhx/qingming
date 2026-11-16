@@ -54,7 +54,7 @@ function boot() {
   resync();
   setInterval(resync, 10 * 60 * 1000);
   addEventListener('online', resync);
-  const debug = installDebug({ clock, stats: () => window.__qm && window.__qm.stats() });
+  const debug = installDebug({ clock, ink, stats: () => window.__qm && window.__qm.stats() });
 
   // ── 留影：隐去界面，镜头自由游走，回车存一张大图 ──
   const photo = { on: false, pos: new THREE.Vector3(), yaw: 0, pitch: 0, fov: 50, timer: 0, view: 'tp', focus: 9, dof: 1 };
@@ -100,6 +100,8 @@ function boot() {
     ink.resize();
     ink._frame = 0;
     ink.render(scene, camera);
+    // 再叠七帧取平均：八帧各自微移到一个像素里的不同位置，等于每个像素取了八个样
+    if (ink.taa && ink.hist) for (let k = 2; k <= 8; k++) ink.render(scene, camera, 1 / k);
     const d = new Date(), z = (n) => String(n).padStart(2, '0');
     const name = `清明上河图-入画-${d.getFullYear()}${z(d.getMonth() + 1)}${z(d.getDate())}-${z(d.getHours())}${z(d.getMinutes())}${z(d.getSeconds())}.png`;
     canvas.toBlob((blob) => {
@@ -115,7 +117,7 @@ function boot() {
     ink.maxPixels = mp0;
     ink.resize();
     ink.render(scene, camera);
-    slow = -0.5; // 存图那一帧慢是应当的，不算掉帧
+    slow = -1; // 存图那一帧慢是应当的，不算掉帧
     sound.sfx('page');
   };
   // 返回 true 表示这一键已被调试菜单 / 留影用掉
@@ -348,44 +350,64 @@ function boot() {
       ui.hideIntro();
       game.enter(isNew);
     },
-    stats: () => ({ ...ink.renderer.info.render, fps: Math.round(fps), pixelRatio: ink.pixelRatio }),
+    stats: () => ({ ...ink.renderer.info.render, fps: Math.round(fps), pixelRatio: ink.pixelRatio, ms: adapt.avg, worst: adapt.shown || 0, size: [ink.rt.width, ink.rt.height], taa: ink.taa && !!ink.hist, adaptOff: adapt.off }),
   };
 
-  let last = performance.now(), fps = 60, slow = 0, smooth = 0, raises = 0;
-  const fullRatio = ink.pixelRatio, fullPixels = ink.maxPixels;
-  let boosted = false;
+  let last = performance.now(), fps = 60, slow = 0, raises = 0;
+  const fullRatio = ink.pixelRatio;
+  // 自适应画质：盯着每秒的平均帧间隔。连着两秒都不到 48 帧（手机上放宽到 24 帧），就把渲染分辨率降一级；
+  // 降到底了帧率也不见起色，说明卡的不是像素（或者屏幕本身就是 30 赫兹），那就恢复原样、不再折腾；
+  // 降过之后若一直流畅，再慢慢升回去。窗口不在前台时浏览器会压低帧率，那不算。
+  const SLOW_MS = coarse ? 42 : 21, FLOOR = coarse ? 0.7 : Math.max(0.6, fullRatio * 0.55);
+  const adapt = { t: 0, n: 0, worst: 0, avg: 16.7, bad: 0, good: 0, skip: 1, drops: 0, before: 0, off: false };
   function frame(now) {
     const raw = (now - last) / 1000;
     const dt = Math.max(0, Math.min(0.05, raw));
     last = now;
     fps += (1 / Math.max(raw, 1e-3) - fps) * 0.05;
-    // 自适应画质：持续掉帧则逐级降低渲染分辨率
-    // （窗口不在前台时浏览器会压低帧率，那不算掉帧；降过之后若一直流畅，再慢慢升回去）
-    const front = document.hasFocus();
-    if (front && raw > 0.042 && raw < 0.25) slow += raw;
-    else slow = Math.max(0, slow - Math.max(0, raw) * 0.5);
-    if (slow > 3 && ink.pixelRatio > 0.7) {
-      ink.pixelRatio = Math.max(0.7, ink.pixelRatio * 0.82);
-      ink.resize();
-      slow = 0;
-      smooth = -30;
+    if (document.hasFocus() && raw > 0 && raw < 0.25) {
+      adapt.t += raw;
+      adapt.n++;
+      adapt.worst = Math.max(adapt.worst, raw * 1000);
     }
-    if (front && raw < 0.02 && ink.pixelRatio < fullRatio) smooth += raw;
-    else smooth = Math.min(smooth, 0);
-    if (smooth > 20 && raises < 2) {
-      raises++; // 至多试两回，免得在两档之间来回折腾
-      ink.pixelRatio = Math.min(fullRatio, ink.pixelRatio / 0.82);
-      ink.resize();
-      smooth = -40;
-    }
-    // 卷首是慢慢展卷的远景，满眼细线：像素再画密些（两倍），进了画再降回来
-    const wantBoost = game.mode !== 'play' && !coarse;
-    if (wantBoost !== boosted) {
-      boosted = wantBoost;
-      ink.maxPixels = boosted ? 9e6 : fullPixels;
-      ink.pixelRatio = boosted ? Math.max(ink.pixelRatio, 2) : Math.min(ink.pixelRatio, fullRatio);
-      ink.resize();
-      slow = 0;
+    if (adapt.t >= 1) {
+      const avg = (adapt.t / adapt.n) * 1000;
+      adapt.avg = avg;
+      adapt.shown = adapt.worst;
+      adapt.t = adapt.n = adapt.worst = 0;
+      if (slow < 0) slow = 0; // 存图那一秒不算
+      else if (adapt.skip > 0) adapt.skip--; // 刚改过分辨率的那一秒也不算
+      else if (!adapt.off) {
+        if (avg > SLOW_MS) {
+          adapt.good = 0;
+          if (++adapt.bad >= 2) {
+            if (ink.pixelRatio > FLOOR + 1e-3) {
+              if (adapt.drops === 0) adapt.before = avg;
+              ink.pixelRatio = Math.max(FLOOR, ink.pixelRatio * 0.85);
+              adapt.drops++;
+              ink.resize();
+              adapt.skip = 1;
+            } else if (adapt.drops > 0 && avg > adapt.before * 0.85) {
+              // 降到底了帧率也不见起色：还原，不再折腾
+              ink.pixelRatio = fullRatio;
+              adapt.off = true;
+              ink.resize();
+            }
+            adapt.bad = 0;
+          }
+        } else {
+          adapt.bad = 0;
+          if (avg < SLOW_MS * 0.88 && ink.pixelRatio < fullRatio) {
+            if (++adapt.good >= 20 && raises < 2) {
+              raises++; // 至多试两回，免得在两档之间来回折腾
+              ink.pixelRatio = Math.min(fullRatio, ink.pixelRatio / 0.85);
+              ink.resize();
+              adapt.good = 0;
+              adapt.skip = 1;
+            }
+          } else adapt.good = 0;
+        }
+      }
     }
     shared.uTime.value += dt;
     if (ui.modal && joyT) {

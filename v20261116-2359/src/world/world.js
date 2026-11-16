@@ -2,12 +2,12 @@
 import * as THREE from 'three';
 import { RNG } from '../util.js';
 import { Batch, buildObject } from '../engine/batch.js';
-import { inkMat, groundMat, waterMat, shared } from '../engine/ink.js';
+import { inkMat, groundMat, waterMat, shared, markDynamic } from '../engine/ink.js';
 import { SignAtlas, mkCanvas, toTex } from '../engine/textures.js';
-import { RV, riverSD, CHANNELS } from './river.js';
-import { meadow } from './cover.js';
+import { RV, riverSD, CHANNELS, bankOf } from './river.js';
+import { meadow, vnoise } from './cover.js';
 import { terrainH, T_RECT, T_STEP, T_NX, T_NZ, T_GRID } from './terrain.js';
-import { WORLD, ROAD_HW, EAST_Z, NODES, EDGES, EXTRA_ROADS, edgeWidth, onRoad, colliders, groundY, HOME, GATE, register } from './layout.js';
+import { WORLD, ROAD_HW, EAST_Z, NODES, EDGES, EXTRA_ROADS, BRIDGE, edgeWidth, onRoad, colliders, groundY, HOME, GATE, register } from './layout.js';
 import * as P from './parts.js';
 import { figure, randomLook } from './figures.js';
 import { buildSections } from './sections.js';
@@ -29,6 +29,7 @@ function makeMaterials(tex, atlas) {
     stone: inkMat({ map: tex.stone, world: true, scale: 0.3, side: D, bump: 0.012 }),
     mat: inkMat({ map: tex.mat, world: true, scale: 0.55, side: D }),
     bank: inkMat({ map: tex.bank, world: true, scale: 0.2, side: D, upN: true }),
+    bankFace: inkMat({ map: tex.bank, world: true, scale: 0.2, side: D }), // 岸壁：法线照实，沿口、水线处才勾得出线
     bark: inkMat({ map: tex.bark, world: true, scale: 0.4, side: D, bump: 0.03 }),
     lattice: inkMat({ map: tex.lattice, world: true, scale: 1.1, side: D, nightGlow: true }),
     cloth: inkMat({ map: tex.cloth, world: true, scale: 0.9, side: D, tint: [1.06, 1.06, 1.04] }),
@@ -394,28 +395,55 @@ export function buildWorld(scene, tex) {
     chunk(0);
     b.chunk = 'river';
     for (const ch of CHANNELS) {
-      const P0 = ch.pts, n = P0.length, slope = Math.min(1.25, ch.hw * 0.4);
-      for (const side of [1, -1]) {
-        const PP = [], IDX = [], COL = [];
+      const P0 = ch.pts, n = P0.length, BANK = bankOf(ch.hw);
+      // 码头街一岸、虹桥两头、护城河是石砌的驳岸；其余是土岸
+      const quay = (x, z) => ch.id === 'moat' || (ch.id === 'main' && ((x > 22 && x < 216 && z < 12) || Math.hypot(x - BRIDGE.xc, z - BRIDGE.zc) < 36));
+      [1, -1].forEach((side, si) => {
+        // 三条带子各自成面（不共用顶点），交接处才是硬折：岸顶 → 沿口的一道深边 → 陡立的岸壁
+        const TOP = [], TC = [], EDGE = [], EC = [], FACE = [], FC = [], I2 = [], IE = [], IS = [], Q = [];
         for (let i = 0; i < n; i++) {
           const a = P0[Math.max(0, i - 1)], c2 = P0[Math.min(n - 1, i + 1)], l = Math.hypot(c2[0] - a[0], c2[1] - a[1]) || 1;
           const nx = (-(c2[1] - a[1]) / l) * side, nz = ((c2[0] - a[0]) / l) * side, c = P0[i];
-          PP.push(c[0] + nx * (ch.hw + 0.08), 0.02, c[1] + nz * (ch.hw + 0.08), c[0] + nx * (ch.hw - slope), RV.WATER_Y - 0.4, c[1] + nz * (ch.hw - slope));
-          if (i < n - 1) IDX.push(i * 2, i * 2 + 1, i * 2 + 2, i * 2 + 2, i * 2 + 1, i * 2 + 3);
-          // 岸坡的上沿取岸上地面的颜色（长草处偏绿、街市处是土色），往水里渐渐变浅：岸与地之间不留一条硬边
+          const q = quay(c[0] + nx * ch.hw, c[1] + nz * ch.hw);
+          Q.push(q);
+          // 土岸不取直：沿口进进出出一拃来宽，颜色也深浅不匀；石岸是砌的，取直
+          const k1 = vnoise(i * 0.43 + si * 17.3, ch.hw), k2 = vnoise(i * 0.19 + 5.1, si * 7.7 + ch.hw);
+          const wob = q ? 0 : (k1 - 0.5) * 0.24, tone = q ? 1 : 0.86 + 0.26 * k2;
+          const at = (arr, d, y) => arr.push(c[0] + nx * (ch.hw + d + wob), y, c[1] + nz * (ch.hw + d + wob));
+          // 岸顶取岸上地面的颜色（长草处偏绿、街市处是土色）：岸与地之间不留硬边
           const gm = meadow(c[0] + nx * (ch.hw + 1.5), c[1] + nz * (ch.hw + 1.5));
-          COL.push(0.9 - 0.22 * gm, 0.88 - 0.1 * gm, 0.8 - 0.24 * gm, 0.9, 0.89, 0.87);
+          const gr = 0.9 - 0.22 * gm, gg = 0.88 - 0.1 * gm, gb = 0.8 - 0.24 * gm;
+          at(TOP, BANK.top, 0.02);
+          at(TOP, BANK.lip, 0);
+          if (q) TC.push(gr, gg, gb, 0.9, 0.89, 0.85); // 压顶石
+          else TC.push(gr, gg, gb, gr * 0.9, gg * 0.88, gb * 0.84);
+          // 沿口：一道淡墨的边。朝镜头的那岸它压在岸壁上头，背着镜头的那岸看不见岸壁，就靠它把岸与水分开
+          at(EDGE, BANK.lip, 0);
+          at(EDGE, BANK.edge, -0.05);
+          if (q) EC.push(0.68, 0.67, 0.64, 0.5, 0.49, 0.47);
+          else EC.push(0.62 * tone, 0.56 * tone, 0.46 * tone, 0.47, 0.43, 0.38);
+          // 岸壁：上头是干的，越往水线越湿越深
+          at(FACE, BANK.edge, -0.05);
+          at(FACE, BANK.foot, RV.WATER_Y);
+          at(FACE, BANK.under, RV.WATER_Y - 0.35);
+          if (q) FC.push(0.92, 0.91, 0.86, 0.66, 0.66, 0.64, 0.48, 0.5, 0.5);
+          else FC.push(0.82 * tone, 0.75 * tone, 0.63 * tone, 0.58, 0.55, 0.5, 0.46, 0.47, 0.47);
+          if (i < n - 1) I2.push(i * 2, i * 2 + 1, i * 2 + 2, i * 2 + 2, i * 2 + 1, i * 2 + 3);
         }
-        // 与地面同一个勾线编号：岸沿不出线，只在近处的水线上有一道
-        b.raw('bank', PP, null, IDX, { lw: 0.85, colors: COL, id: 0.012, double: true });
-      }
+        for (let i = 0; i < n - 1; i++) (Q[i] && Q[i + 1] ? IS : IE).push(i * 3, i * 3 + 1, i * 3 + 3, i * 3 + 3, i * 3 + 1, i * 3 + 4, i * 3 + 1, i * 3 + 2, i * 3 + 4, i * 3 + 4, i * 3 + 2, i * 3 + 5);
+        // 岸顶、沿口与地面同一个勾线编号（不出线）；岸壁另算，与岸顶、与水面相接处各出一道线
+        b.raw('bank', TOP, null, I2, { lw: 0.85, colors: TC, id: 0.012, double: true });
+        b.raw('bank', EDGE, null, I2, { lw: 0.85, colors: EC, id: 0.012, double: true });
+        if (IE.length) b.raw('bankFace', FACE, null, IE, { lw: 0.8, colors: FC, id: 0.031, double: true });
+        if (IS.length) b.raw('stone', FACE, null, IS, { lw: 0.8, colors: FC, id: 0.031, double: true });
+      });
     }
   }
 
   // ── 静态网格 ──
   const statics = b.build(mats, scene);
   const chunks = [], rooms = [];
-  const NO_SHADOW = new Set(['rafter', 'eave', 'lattice', 'sign', 'signWind', 'stone', 'grass', 'grassLow', 'flower', 'crop', 'bank']);
+  const NO_SHADOW = new Set(['rafter', 'eave', 'lattice', 'sign', 'signWind', 'stone', 'grass', 'grassLow', 'flower', 'crop', 'bank', 'bankFace']);
   for (const m of statics) {
     m.matrixAutoUpdate = false;
     m.updateMatrix();
@@ -500,7 +528,7 @@ export function buildWorld(scene, tex) {
     o.frustumCulled = false;
     o.layers.set(1);
   });
-  scene.add(birds);
+  scene.add(markDynamic(birds));
 
   // ── 柳絮与落花：清明时节，随风飘在眼前 ──
   const NC = 200, seeds = new Float32Array(NC * 3), crng = new RNG(303);
@@ -509,13 +537,14 @@ export function buildWorld(scene, tex) {
   cgeo.setAttribute('position', new THREE.BufferAttribute(seeds, 3));
   const catkinMat = new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3,
-    uniforms: { uTime: shared.uTime, uResY: shared.uResY, uCam: { value: new THREE.Vector3() }, uShow: { value: 1 }, uFly: { value: 0 } },
+    uniforms: { uTime: shared.uTime, uResY: shared.uResY, uJit: shared.uJit, uCam: { value: new THREE.Vector3() }, uShow: { value: 1 }, uFly: { value: 0 } },
     vertexShader: /* glsl */ `
       uniform float uTime;
       uniform float uResY;
       uniform vec3 uCam;
       uniform float uShow;
       uniform float uFly;
+      uniform vec2 uJit;
       varying float vK;
       varying float vB;
       void main(){
@@ -530,6 +559,7 @@ export function buildWorld(scene, tex) {
         vB = smoothstep(0.1, 0.5, sin(uTime*(1.3 + s.z*1.6) + s.x*50.0));
         vec4 mv = viewMatrix * vec4(p, 1.0);
         gl_Position = projectionMatrix * mv;
+        gl_Position.xy -= uJit * gl_Position.w; // 飘着的东西不参加跨帧累积（见 ink.js 的 markDynamic）
         gl_PointSize = uShow * mix(1.0, 1.5, uFly) * clamp(mix(0.035, 0.075, s.z) * projectionMatrix[1][1] * uResY * 0.5 / max(0.3, -mv.z), 1.2, uResY * 0.006);
         vK = s.x;
       }`,
@@ -546,7 +576,7 @@ export function buildWorld(scene, tex) {
         // 落花粉白，柳絮雪白；夜里是萤火的黄绿
         vec3 col = vK > 0.72 ? vec3(1.2, 0.97, 0.97) : vec3(1.22, 1.21, 1.17);
         col = mix(col, vec3(1.25, 1.25, 0.55) * vB, uFly);
-        gColor = vec4(col * 0.8, 1.0);
+        gColor = vec4(col * 0.8, 0.0);
         gNormal = vec4(0.5, 0.5, 0.0, 0.0);
       }`,
   });

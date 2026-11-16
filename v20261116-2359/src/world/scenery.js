@@ -3,11 +3,12 @@
 // 人文的：牧童指路、秋千、清明上坟、寺院钟亭香炉、扳罾打鱼、街上的灯彩与三三两两的活计。
 // 原画里没有、此番入画所添的，都放在主街走向之外，不动原画的布局。
 import { RNG } from '../util.js';
-import { RV, riverSD, CHANNELS } from './river.js';
+import { RV, riverSD, riverHW, CHANNELS, bankHeight } from './river.js';
 import { ROAD_HW, EAST_Z, BRIDGE, PLANK, DYKE, onRoad, colliders, register } from './layout.js';
 import * as P from './parts.js';
 import { column } from './timber.js';
 import { buildObject } from '../engine/batch.js';
+import { markDynamic } from '../engine/ink.js';
 import { figure, randomLook } from './figures.js';
 import { FACE } from '../engine/textures.js';
 import { meadow, vnoise } from './cover.js';
@@ -18,11 +19,8 @@ const PI = Math.PI;
 const WHITE = [1.14, 1.14, 1.1];
 const RAPE = [1.3, 1.14, 0.34], PINK = [1.22, 0.86, 0.9], PALE = [1.2, 1.18, 1.1];
 const MONK = { robe: [0.84, 0.7, 0.5], trim: [0.5, 0.4, 0.3], face: FACE.man3, hat: 'none', arms: 'tuck', prop: null };
-// 岸坡上某处的地面高（水线以下顺坡而下）
-const bankY = (x, z) => {
-  const sd = riverSD(x, z);
-  return sd < 0 ? (RV.WATER_Y - 0.4) * Math.min(1, -sd / 1.25) : 0;
-};
+// 岸边某处的地面高（岸壁陡降到水面，再往里是浅滩）
+const bankY = (x, z) => bankHeight(riverSD(x, z), riverHW(x, z));
 
 // ───────────────────────── 小件 ─────────────────────────
 // 亭：四柱，攒尖或歇山顶，三面坐凳；上得去
@@ -135,7 +133,7 @@ function swing(c, x, z, rot) {
   grp.rotation.order = 'YXZ';
   grp.position.set(x, 3.16 + terrainH(x, z), z);
   grp.rotation.y = rot;
-  c.scene.add(grp);
+  c.scene.add(markDynamic(grp));
   c.dynamic.push((t) => {
     grp.rotation.x = Math.sin(t * 1.95) * 0.42;
   });
@@ -441,7 +439,7 @@ function flyingEgrets(c) {
       bb.rod('flat', [-0.34, 0, 0], [-0.7, -0.01, 0], 0.008, 0.006, 3, { color: [0.3, 0.3, 0.28], lw: 0.3 });
       for (const sz of [-1, 1]) bb.raw('flat', [0.12, 0, 0, -0.16, 0, 0, -0.1, 0.34, sz * 0.86, 0.06, 0.3, sz * 0.8], null, [0, 1, 2, 0, 2, 3], { ...o, double: true });
     });
-    c.scene.add(g);
+    c.scene.add(markDynamic(g));
     birds.push({ g, a: (i / 6) * 0.5 + rng.f(-0.03, 0.03), dy: rng.f(-1.2, 1.2), dr: rng.f(-5, 5), ph: rng.f(6.28) });
   }
   c.dynamic.push((t) => {
