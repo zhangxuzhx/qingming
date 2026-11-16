@@ -3,9 +3,9 @@
 import * as THREE from 'three';
 import { RNG } from '../util.js';
 
-export const FONT_KAI = '"STKaiti","KaiTi","楷体","Kaiti SC","FangSong","仿宋",serif';
-export const FONT_XING = '"STXingkai","华文行楷","STKaiti","KaiTi","楷体",serif';
-export const FONT_LI = '"STLiti","LiSu","隶书","STKaiti","KaiTi","楷体",serif';
+export const FONT_KAI = '"QM Kai","STKaiti","KaiTi","楷体","Kaiti SC",serif';
+export const FONT_XING = '"QM Brush","QM Kai","STXingkai","华文行楷","KaiTi","楷体",serif';
+export const FONT_LI = '"QM Brush","QM Kai","STLiti","LiSu","隶书","KaiTi",serif';
 
 export function mkCanvas(w, h = w) {
   const c = document.createElement('canvas');

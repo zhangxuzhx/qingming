@@ -6,17 +6,26 @@
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <link rel="stylesheet" href="./v20261116-1730/src/style.css" />
-    <link rel="stylesheet" href="./v20261116-1730/src/touch.css" />
-<link rel="stylesheet" href="./v20261116-1730/src/inkui.css" />
+    <link rel="preload" href="./assets/fonts/kai.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="./assets/fonts/brush.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="./assets/fonts/title.woff2" as="font" type="font/woff2" crossorigin />
+    <style>
+      /* 随游戏分发的开源字体（见 assets/fonts/字体说明.txt）：不靠各人电脑里装了什么字体 */
+      @font-face { font-family: 'QM Kai'; src: url('./assets/fonts/kai.woff2') format('woff2'); font-display: swap; }
+      @font-face { font-family: 'QM Brush'; src: url('./assets/fonts/brush.woff2') format('woff2'); font-display: swap; }
+      @font-face { font-family: 'QM Title'; src: url('./assets/fonts/title.woff2') format('woff2'); font-display: swap; }
+    </style>
+    <link rel="stylesheet" href="./v20261116-1748/src/style.css" />
+    <link rel="stylesheet" href="./v20261116-1748/src/touch.css" />
+<link rel="stylesheet" href="./v20261116-1748/src/inkui.css" />
     <script type="importmap">
-      { "imports": { "three": "./v20261116-1730/lib/three.module.js" } }
+      { "imports": { "three": "./v20261116-1748/lib/three.module.js" } }
     </script>
   </head>
   <body>
     <canvas id="view"></canvas>
     <div id="ui"></div>
     <div id="loading">研墨铺纸……</div>
-    <script type="module" src="./v20261116-1730/src/main.js"></script>
+    <script type="module" src="./v20261116-1748/src/main.js"></script>
   </body>
 </html>

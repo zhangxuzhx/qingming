@@ -181,7 +181,7 @@ export class UI {
     r.classList.remove('hidden');
     r.innerHTML = `<div class="box paper"><h2>入画为谁</h2><div class="tip">画中八百余人，各有营生。此番先做一回汴京商贾，其余角色日后陆续开卷。</div>
       <div class="cards">${ROLES.map((o) => `<div class="role ${o.open ? 'open' : 'locked'}" data-id="${o.id}">
-        <div class="seal lock">${o.open ? '可入' : '未啟'}</div><div class="rn">${o.name}</div><div class="rw">${o.who}</div><div class="rd">${o.desc}</div></div>`).join('')}</div></div>`;
+        <div class="seal lock">${o.open ? '可入' : '未启'}</div><div class="rn">${o.name}</div><div class="rw">${o.who}</div><div class="rd">${o.desc}</div></div>`).join('')}</div></div>`;
     r.onclick = (e) => {
       const c = e.target.closest('.role.open');
       if (c) onPick(c.dataset.id);
@@ -390,7 +390,7 @@ export class UI {
         ctx.fillRect(-q, -q, 2 * q, 2 * q);
         ctx.restore();
         ctx.fillStyle = '#f6e9d2';
-        ctx.font = `${12 * this.dpr}px "STKaiti","KaiTi",serif`;
+        ctx.font = `${12 * this.dpr}px "QM Kai","STKaiti","KaiTi",serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(g.target.ch, R + sx, R + sy + this.dpr);

@@ -1,0 +1,5 @@
+这里的字体都是开源字体（SIL Open Font License 1.1），裁剪到只含本游戏用到的字，仅作网页字体随游戏分发：
+  kai.woff2    霞鹜文楷 LXGW WenKai　https://github.com/lxgw/LxgwWenKai　许可见 OFL-LXGWWenKai.txt
+  brush.woff2  马善政毛笔楷书 Ma Shan Zheng　https://github.com/googlefonts/mashanzheng　许可见 OFL-MaShanZheng.txt
+  title.woff2  Yuji Boku　https://github.com/Kinutafontfactory/Yuji　许可见 OFL-YujiBoku.txt
+由 tools/subset_fonts.py 生成；chars.txt 是裁剪时收进去的全部字符。

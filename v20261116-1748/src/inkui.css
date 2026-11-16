@@ -132,3 +132,10 @@
 /* 题名略收小，印章落在题名与“丝竹”一行之间，两头都不压 */
 #title .name { top: calc(var(--vh) * 6.5); font-size: min(calc(var(--vh) * 11.6), calc(var(--vw) * 10)); }
 #title .sub { top: calc(var(--vh) * 9.5); right: calc(calc(var(--vw) * 7) + min(calc(var(--vh) * 11.6), calc(var(--vw) * 10)) + 26px); }
+
+/* ── 字体的几处例外 ── */
+/* 题名与两方印（入畫、夢華）是繁体，用有繁体字形的题名字体，五个字出自同一款 */
+#title .name, #bigmap .bar h2 { font-family: var(--title); }
+#title .name .stamp span, #colophon .seal, #colophon .seal span { font-family: var(--title); }
+/* 题跋里有生僻字（丹艧的艧），毛笔那款没有，整段用楷体，免得夹一个别的字体的字 */
+#colophon .cols { font-family: var(--kai); }

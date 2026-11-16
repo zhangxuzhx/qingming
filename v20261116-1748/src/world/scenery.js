@@ -149,7 +149,7 @@ function cropField(c, x, z, w, d, col, o = {}) {
     for (let px = x - w / 2 + 0.5; px < x + w / 2 - 0.3; px += rng.f(0.75, 1.05)) {
       if (colliders.hit(px, pz, 0.5, 0)) continue;
       c.chunk(px);
-      b.place(px, 0, pz + rng.f(-0.12, 0.12), 0, () => (col ? P.flowers(b, rng, [col[0] * rng.f(0.92, 1.05), col[1] * rng.f(0.92, 1.05), col[2]], o.s || rng.f(1, 1.3)) : P.grassTuft(b, rng, rng.f(0.7, 0.95), rng.f(0.86, 0.98))));
+      b.place(px, 0, pz + rng.f(-0.12, 0.12), 0, () => (col ? P.flowers(b, rng, [col[0] * rng.f(0.92, 1.05), col[1] * rng.f(0.92, 1.05), col[2]], o.s || rng.f(1, 1.3), 'crop') : P.grassTuft(b, rng, rng.f(0.7, 0.95), rng.f(0.86, 0.98))));
     }
   }
 }

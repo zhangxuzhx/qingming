@@ -461,15 +461,24 @@ function boot() {
   };
 }
 
+// 招牌、字画是画在贴图上的，生成之前得先把随游戏带的字体载好；最多等 4 秒，载不下来就用系统字体顶上
+function fontsReady() {
+  if (!document.fonts || !document.fonts.load) return Promise.resolve();
+  const want = ['"QM Kai"', '"QM Brush"', '"QM Title"'].map((f) => document.fonts.load(`24px ${f}`, '清明上河圖汴京'));
+  return Promise.race([Promise.all(want), new Promise((r) => setTimeout(r, 4000))]).catch(() => {});
+}
+
 // 先让“研墨铺纸”显示出来，再开始生成
 setTimeout(() =>
-  setTimeout(() => {
-    try {
-      boot();
-    } catch (e) {
-      console.error(e);
-      const l = document.getElementById('loading');
-      if (l) l.textContent = '展卷未成：' + (e && e.message ? e.message : e);
-    }
-  }, 40)
+  fontsReady().then(() =>
+    setTimeout(() => {
+      try {
+        boot();
+      } catch (e) {
+        console.error(e);
+        const l = document.getElementById('loading');
+        if (l) l.textContent = '展卷未成：' + (e && e.message ? e.message : e);
+      }
+    }, 40)
+  )
 );
