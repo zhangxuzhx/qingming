@@ -331,7 +331,8 @@ function dyke(c) {
 function temple(c) {
   const { b, rng, W_, atlas } = c;
   const TX = -188;
-  // 香炉
+  // 香炉（炉里的香烟见 world.js 的“炊烟、蒸汽、香烟”）
+  c.smokes.push([TX, terrainH(TX, -17.4) + 1.35, -17.4, 2]);
   c.at(TX, -17.4, 0, () => {
     const br = [0.56, 0.52, 0.42], id = b.nextId();
     b.box('stone', 0, 0.22, 0, 1.5, 0.44, 1.5, {});
