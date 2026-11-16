@@ -276,6 +276,19 @@ export function addRamp(x0, z0, x1, z1, axis, ya, yb) {
 }
 const deckH = (d, x, z) => (d.ax === 0 ? d.y : d.ax === 1 ? d.y + ((d.yb - d.y) * (x - d.x0)) / (d.x1 - d.x0) : d.y + ((d.yb - d.y) * (z - d.z0)) / (d.z1 - d.z0));
 
+// 这一处上头有没有桥面、楼面、栈台、亭台盖着（长草、落花、灌木都要让开：它们是按地面的高度种的，
+// 盖得低的地方会从板缝里钻出来）。m：四周多让出的距离
+export function covered(x, z, m = 0.5) {
+  const [bs, bt] = bridgeLocal(x, z);
+  if (Math.abs(bs) < BRIDGE.L + 2 + m && Math.abs(bt) <= BRIDGE.hw + 0.9 + m) return true;
+  for (let i = Math.floor((x - m) / DCELL); i <= Math.floor((x + m) / DCELL); i++)
+    for (let j = Math.floor((z - m) / DCELL); j <= Math.floor((z + m) / DCELL); j++) {
+      const l = deckGrid.get(i + ',' + j);
+      if (l) for (const d of l) if (x > d.x0 - m && x < d.x1 + m && z > d.z0 - m && z < d.z1 + m) return true;
+    }
+  return false;
+}
+
 const BLOCK = -999, STEP = 0.82;
 function bridgeAt(x, z) {
   const [bs, bt] = bridgeLocal(x, z);

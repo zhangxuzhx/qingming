@@ -470,6 +470,20 @@ function boot() {
       ink.shadowRange = 150;
       ink.shadowCenter.set(game.cine - 9, 0, 10);
     }
+    // 近处另一张高精度的投影：罩住镜头跟前十几步（卷首的俯瞰用不上；手机上不开）
+    // （机器吃力、已经在降分辨率了，也不开：多画一遍场景不划算）
+    if (coarse || game.mode !== 'play' || (game.wide || 0) > 0.3 || ink.pixelRatio < fullRatio * 0.9) ink.shadowNear = 0;
+    else if (dbg) {
+      ink.shadowNear = Math.max(6, Math.min(16, Math.hypot(dbg.pos[0] - dbg.target[0], dbg.pos[1] - dbg.target[1], dbg.pos[2] - dbg.target[2]) * 1.2));
+      ink.shadowCenter2.set(dbg.target[0], dbg.target[1], dbg.target[2]);
+    } else if (photo.on) {
+      const f = Math.max(2, Math.min(14, photo.focus)), cp = Math.cos(photo.pitch);
+      ink.shadowNear = Math.max(7, Math.min(16, f * 1.3));
+      ink.shadowCenter2.set(photo.pos.x - Math.sin(photo.yaw) * cp * f, photo.pos.y + Math.sin(photo.pitch) * f, photo.pos.z - Math.cos(photo.yaw) * cp * f);
+    } else {
+      ink.shadowNear = 13;
+      ink.shadowCenter2.set(game.player.x - Math.sin(game.player.yaw) * 5, game.player.y + 1, game.player.z - Math.cos(game.player.yaw) * 5);
+    }
     ink.expose += ((world.indoor && !photo.on && !dbg ? 1.36 : 1) - ink.expose) * Math.max(0, Math.min(1, raw * 2.5));
     // 景深：各档之间缓缓过渡
     {

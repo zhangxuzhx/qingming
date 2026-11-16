@@ -63,6 +63,79 @@ export class AvatarAnim {
     this.hy = new Spring(9, 0.85);
     this.hp = new Spring(9, 0.85);
     this.step = 0; // 落脚的计数（每落一脚加一，给脚步声用）
+    // 袍摆的网格：记下原形，每帧按两条腿的位置把它撑开（见 _drape）
+    this.skBase = this.j.skirt.position.clone();
+    this.sk = [];
+    this.j.skirt.traverse((o) => {
+      if (!o.isMesh) return;
+      const P = o.geometry.attributes.position, p0 = Float32Array.from(P.array), ys = [];
+      for (let i = 0; i < P.count; i++) if (!ys.some((y) => Math.abs(y - p0[i * 3 + 1]) < 0.004)) ys.push(p0[i * 3 + 1]);
+      ys.sort((a, b) => b - a); // 自腰往下
+      const rows = ys.map((y) => ({ y, zf: 0.05, zb: -0.05 })), rowOf = new Uint8Array(P.count);
+      for (let i = 0; i < P.count; i++) {
+        let k = 0;
+        for (let r = 1; r < ys.length; r++) if (Math.abs(ys[r] - p0[i * 3 + 1]) < Math.abs(ys[k] - p0[i * 3 + 1])) k = r;
+        rowOf[i] = k;
+        rows[k].zf = Math.max(rows[k].zf, p0[i * 3 + 2]);
+        rows[k].zb = Math.min(rows[k].zb, p0[i * 3 + 2]);
+      }
+      o.frustumCulled = false;
+      this.sk.push({ P, p0, rows, rowOf, F: rows.map(() => [1, 1]), B: rows.map(() => [1, 1]), off: rows.map(() => 0) });
+    });
+  }
+
+  // 袍摆是罩在腿外面的：前抬的大腿把前襟顶出去，后蹬的小腿把后摆带起来。
+  // 袍摆的网格自腰到下摆有几圈；每一圈按“这一段高度里左右两条腿各自伸到多前、多后”把前半、后半分别撑开，
+  // 左右两侧各管各的腿，中间平滑过渡。lag：下摆因惯性拖后的距离（米）
+  _drape(rest, lag) {
+    const j = this.j, legs = [];
+    if (!rest)
+      for (const [leg, shin] of [[j.legL, j.shinL], [j.legR, j.shinR]]) {
+        // 胯 → 膝 → 踝，各取几点（连同腿的粗细）
+        const th = leg.rotation.x, kn = th + shin.rotation.x, hy = leg.position.y, hz = leg.position.z;
+        const ky = hy - L1 * Math.cos(th), kz = hz - L1 * Math.sin(th), pts = [];
+        for (let t = 0; t <= 1.001; t += 0.25) pts.push([mix(hy, ky, t), mix(hz, kz, t), mix(0.1, 0.085, t), leg.position.x]);
+        for (let t = 0.2; t <= 1.001; t += 0.2) pts.push([ky - L2 * Math.cos(kn) * t, kz - L2 * Math.sin(kn) * t, mix(0.085, 0.07, t), leg.position.x]);
+        legs.push(pts);
+      }
+    for (const m of this.sk) {
+      const { rows, F, B, off } = m, n = rows.length;
+      const near = rows.map(() => []); // 每一圈近旁的腿上各点：[左右位置, 前后位置, 粗细]
+      for (let k = 0; k < n; k++) {
+        const y = this.skBase.y + rows[k].y, hi = k ? this.skBase.y + rows[k - 1].y : y + 0.1, lo = k < n - 1 ? this.skBase.y + rows[k + 1].y : y - 0.07;
+        const t = k / Math.max(1, n - 1);
+        off[k] = rest ? 0 : -lag * t * t;
+        for (let i = 0; i < 2; i++) {
+          let f = 1, b = 1;
+          if (!rest)
+            for (const [py, pz, R, px] of legs[i]) {
+              if (py < lo || py > hi) continue;
+              const z = pz - this.skBase.z - off[k];
+              f = Math.max(f, (z + R) / (0.9 * rows[k].zf));
+              b = Math.max(b, (z - R) / (0.9 * rows[k].zb));
+              near[k].push([px, z, R + 0.014]);
+            }
+          // 整片只撑开一半，余下的靠下面“就地顶出去”补足：不然疾行时前襟会鼓成一口钟
+          F[k][i] = 1 + (Math.min(f, 2.8) - 1) * 0.5;
+          B[k][i] = 1 + (Math.min(b, 2.8) - 1) * 0.5;
+        }
+      }
+      const a = m.P.array, p0 = m.p0;
+      for (let i = 0, c = m.P.count; i < c; i++) {
+        const k = m.rowOf[i], x0 = p0[i * 3], z0 = p0[i * 3 + 2], w = sstep(-0.1, 0.1, x0);
+        let z = z0 * (z0 >= 0 ? mix(F[k][0], F[k][1], w) : mix(B[k][0], B[k][1], w));
+        // 整片撑开之后，腿外侧那一圈仍可能露在袍摆的侧前、侧后：就地再顶出去，正好包住腿
+        for (const [sx, sz, R] of near[k]) {
+          const dx = x0 - sx;
+          if (dx > -R && dx < R) {
+            const e = Math.sqrt(R * R - dx * dx);
+            z = z0 >= 0 ? Math.max(z, sz + e) : Math.min(z, sz - e);
+          }
+        }
+        a[i * 3 + 2] = z + off[k];
+      }
+      m.P.needsUpdate = true;
+    }
   }
 
   // p：主角（位置、朝向 face、速度、ground、swim、swimT）；o.yaw / o.pitch 镜头方向；o.look 要看的一点（世界坐标）；
@@ -243,14 +316,12 @@ export class AvatarAnim {
     // ── 垂脚、袍摆 ──
     const tailT = p.swim ? 0.5 : this.air > 0.5 ? (p.vy > 0 ? -0.3 : 0.9) : 0.06 + (0.12 * jog + 0.4 * spr) * amp - clamp(aF * 0.02, -0.5, 0.5) + Math.sin(2 * cyc) * 0.05 * amp;
     j.tails.rotation.x = clamp(this.tail.step(tailT, dt), -0.7, 1.3);
-    const skT = p.swim ? 0 : (0.02 + 0.06 * jog + 0.05 * spr) * amp - clamp(aF * 0.007, -0.14, 0.14);
-    j.skirt.rotation.x = clamp(this.skirt.step(skT, dt), -0.2, 0.3);
-    j.skirt.rotation.z = -this.bank.x * 0.6 + Math.sin(cyc) * 0.025 * amp;
-    // 袍摆要罩得住两膝：前抬的大腿把前襟顶出去，后蹬的腿把后摆带起来——按两膝前后的位置把袍摆撑开、挪过去
-    const kL = j.legL.position.z - L1 * Math.sin(j.legL.rotation.x), kR = j.legR.position.z - L1 * Math.sin(j.legR.rotation.x);
-    const kMax = Math.max(kL, kR, 0.06), kMin = Math.min(kL, kR, -0.06);
-    const skZ = p.swim ? 1.2 : clamp(((kMax - kMin) / 2 + 0.09) / 0.165, 1, 2);
-    j.skirt.scale.z += (skZ - j.skirt.scale.z) * kk;
-    j.skirt.position.z += ((p.swim ? 0 : (kMax + kMin) * 0.5) - j.skirt.position.z) * kk;
+    // 下摆因惯性拖在后头：跑起来往后飘一点，起步、急停时甩一下
+    const skT = p.swim ? 0 : (0.02 + 0.05 * jog + 0.04 * spr) * amp - clamp(aF * 0.006, -0.12, 0.12);
+    this.skirt.step(skT, dt);
+    j.skirt.rotation.set(0, 0, 0);
+    j.skirt.scale.z = 1;
+    j.skirt.position.copy(this.skBase);
+    this._drape(this.swim > 0.5, clamp(this.skirt.x, -0.2, 0.3) * 0.7);
   }
 }

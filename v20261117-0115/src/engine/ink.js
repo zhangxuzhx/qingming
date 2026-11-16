@@ -44,6 +44,10 @@ export const shared = {
   uShadowMat: { value: new THREE.Matrix4() },
   uShadowOn: { value: 0 },
   uShadowPass: { value: 0 },
+  // 近处另有一张投影：只罩住镜头跟前十几步，纹素细得多，影子的边才利落
+  tShadow2: { value: null },
+  uShadowMat2: { value: new THREE.Matrix4() },
+  uShadow2On: { value: 0 },
   // 倒影
   uReflPass: { value: 0 },
   uWaterY: { value: RV.WATER_Y },
@@ -301,6 +305,9 @@ uniform sampler2D tNoise;
 uniform highp sampler2D tShadow;
 uniform mat4 uShadowMat;
 uniform float uShadowOn;
+uniform highp sampler2D tShadow2;
+uniform mat4 uShadowMat2;
+uniform float uShadow2On;
 uniform float uShadowPass;
 uniform float uReflPass;
 uniform float uWaterY;
@@ -335,23 +342,36 @@ vec3 applyFog(vec3 col){
   fog = 1.0 - (1.0 - fog) * (1.0 - clamp(mist, 0.0, 0.85));
   return mix(col, uFogCol, fog);
 }
-// 投影（0 受光 … 1 全在影中）
+// 投影（0 受光 … 1 全在影中）。两级：镜头跟前十几步用近处那张（细），再远用大的那张；两张交界处过渡
+float shadowTaps(highp sampler2D t, vec3 p, float r0, float rot){
+  float s = 0.0;
+  for(int i = 0; i < 8; i++){
+    float a = float(i)*2.39996 + rot;
+    float r = sqrt((float(i) + 0.5) / 8.0) * r0;
+    s += step(texture(t, p.xy + vec2(cos(a), sin(a)) * r).r + 0.0003, p.z);
+  }
+  return s * 0.125;
+}
 float shadowAt(vec3 wp, vec3 n){
   if(uShadowOn < 0.5) return 0.0;
   float ndl = max(dot(n, uSun), 0.0);
-  vec3 p = (uShadowMat * vec4(wp + n * (0.05 + 0.12*(1.0 - ndl)), 1.0)).xyz;
-  if(p.x < 0.005 || p.x > 0.995 || p.y < 0.005 || p.y > 0.995 || p.z > 1.0) return 0.0;
   float rot = texture(tNoise, vObj.xz*0.71 + vObj.y*0.37).b * 6.2831;
-  float s = 0.0;
   const float TX = 1.0 / ${SHADOW_SIZE}.0;
-  for(int i = 0; i < 8; i++){
-    float a = float(i)*2.39996 + rot;
-    float r = sqrt((float(i) + 0.5) / 8.0) * 2.8 * TX;
-    float d = texture(tShadow, p.xy + vec2(cos(a), sin(a)) * r).r;
-    s += step(d + 0.0003, p.z);
+  float s2 = 0.0, w2 = 0.0;
+  if(uShadow2On > 0.5){
+    vec3 q = (uShadowMat2 * vec4(wp + n * (0.012 + 0.04*(1.0 - ndl)), 1.0)).xyz;
+    vec2 e2 = smoothstep(vec2(0.0), vec2(0.1), min(q.xy, 1.0 - q.xy));
+    w2 = e2.x * e2.y * step(q.z, 1.0);
+    if(w2 > 0.0) s2 = shadowTaps(tShadow2, q, 1.7 * TX, rot);
   }
-  vec2 e = smoothstep(vec2(0.0), vec2(0.07), min(p.xy, 1.0 - p.xy));
-  return s * 0.125 * e.x * e.y;
+  if(w2 > 0.999) return s2;
+  vec3 p = (uShadowMat * vec4(wp + n * (0.05 + 0.12*(1.0 - ndl)), 1.0)).xyz;
+  float s1 = 0.0;
+  if(!(p.x < 0.005 || p.x > 0.995 || p.y < 0.005 || p.y > 0.995 || p.z > 1.0)){
+    vec2 e = smoothstep(vec2(0.0), vec2(0.07), min(p.xy, 1.0 - p.xy));
+    s1 = shadowTaps(tShadow, p, 2.8 * TX, rot) * e.x * e.y;
+  }
+  return mix(s1, s2, w2);
 }
 // 光影：受光处带日色；影里也分上下——朝天的面得天光，偏冷偏亮；朝地的面得地面返照，偏暖偏暗
 vec3 lightWash(vec3 col, vec3 n, float amount){
@@ -373,6 +393,12 @@ vec3 lightWash(vec3 col, vec3 n, float amount){
   // 受光面随朝向略分深浅，显出体积
   col *= 1.0 - 0.13 * amount * lit * (1.0 - clamp(ndl, 0.0, 1.0));
   return col;
+}
+// 带起伏的受光：n 是加了凹凸的法线，ng 是这个面本来的法线。朝日的小坡亮一点、背日的暗一点。
+// 原先凹凸只挪动“受光 / 背光”的分界，正对着日头的墙面、地面上看不出起伏，近看一片平
+vec3 lightWash(vec3 col, vec3 n, vec3 ng, float amount){
+  col = lightWash(col, n, amount);
+  return col * (1.0 + clamp((dot(n, uSun) - dot(ng, uSun)) * 1.15, -0.3, 0.22) * amount);
 }
 // 由高度的屏幕空间变化率推出起伏的法线（瓦垄、木纹、墙面的凹凸）
 vec3 perturb(vec3 pos, vec3 n, float h){
@@ -430,24 +456,48 @@ void main(){
     if(((fc.x + fc.y) & 1) == 0) discard;
   }
   vec3 col = tex.rgb * vCol * uTint;
+  // 近处才看得见的细节按远近淡出：远了每个纹理只剩几个像素，留着只会闪
+  float nearK = 1.0 - smoothstep(7.0, 20.0, vZ);
   #ifndef NO_FOG
   vec3 nl = n;
   #ifdef BUMP
   float hgt = dot(tex.rgb, vec3(0.3333)) * uBump;
+  // 表面的细颗粒（灰泥的砂眼、木头的毛孔、石面的麻点）
+  float tooth = texture(tNoise, wuv * 3.1).r - 0.5;
+  hgt += tooth * (0.002 + uBump * 0.3) * nearK;
+  col *= 1.0 + tooth * 0.07 * nearK;
   #ifdef TILE
   // 瓦垄：一垄一垄隆起，垄间成沟
   hgt += cos(vUv.x * 50.2655) * 0.03;
   #endif
   nl = perturb(vWorld, n, hgt);
   #endif
-  col = lightWash(col, nl, uShade);
+  col = lightWash(col, nl, n, uShade);
   #ifdef WEATHER
   if(an.y < 0.5){
-    // 檐下淌的雨痕、墙根溅的泥
+    // 墙是旧的。檐下淌的雨痕：宽的几道远看也在
     float st = texture(tNoise, vec2(wuv.x*0.33, wuv.y*0.035)).r;
     float st2 = texture(tNoise, vec2(wuv.x*1.1 + 0.4, wuv.y*0.09)).g;
-    col *= 1.0 - 0.17 * smoothstep(0.5, 0.78, st*0.65 + st2*0.35);
-    col *= 1.0 - 0.22 * (1.0 - smoothstep(0.0, 0.95, vWorld.y)) * (0.5 + st2);
+    col *= 1.0 - 0.19 * smoothstep(0.5, 0.78, st*0.65 + st2*0.35);
+    // 细的水渍一道一道往下淌，近看才见
+    float drip = smoothstep(0.6, 0.8, texture(tNoise, vec2(wuv.x*2.7, wuv.y*0.12 + 0.7)).b);
+    col *= 1.0 - 0.11 * drip * nearK;
+    // 大片的旧色、霉斑
+    float blot = texture(tNoise, wuv * 0.045 + 0.19).g;
+    col *= 1.0 - 0.1 * smoothstep(0.48, 0.74, blot);
+    // 墙根：溅上来的泥、返潮生的青苔，上沿高高低低
+    float base = 1.0 - smoothstep(0.0, 0.45 + 0.85 * st2, vWorld.y);
+    col *= 1.0 - 0.25 * base * (0.5 + st2);
+    col = mix(col, col * vec3(0.84, 0.94, 0.78), base * 0.55 * smoothstep(0.38, 0.66, blot));
+    // 发丝一样的裂纹：只在几片地方有
+    // 发丝一样的裂纹：自上而下弯弯折折的几道，隔两三步一道，有的墙段没有（等值线画出来是一圈圈的，像虫蛀，不用）
+    float strip = floor(wuv.x / 2.3);
+    float wob = texture(tNoise, vec2(wuv.y * 0.09, strip * 0.37 + 0.11)).r;
+    float cx = wuv.x / 2.3 + (wob - 0.5) * 0.62 + (texture(tNoise, wuv * 0.9).g - 0.5) * 0.02;
+    float ck = abs(fract(cx) - 0.5), cw = fwidth(cx) * 1.2;
+    float seg = smoothstep(0.5, 0.62, texture(tNoise, vec2(strip * 0.173 + 0.31, wuv.y * 0.045)).g);
+    float crack = (1.0 - smoothstep(0.0025, 0.0025 + cw, ck)) * seg;
+    col *= 1.0 - 0.34 * crack * (1.0 - smoothstep(10.0, 30.0, vZ));
   }
   #else
   col *= 1.0 - 0.1 * (1.0 - smoothstep(0.0, 1.3, vWorld.y)) * step(an.y, 0.5);
@@ -564,6 +614,42 @@ void main(){
     col = mix(col, stone, pave * 0.92);
     hgt -= joint * 0.02 * pave;
   }
+  // ── 近处的细节（二十来步之内）：土粒、碎石、干裂的细纹。远了只剩几个像素，不画 ──
+  float nearK = 1.0 - smoothstep(9.0, 24.0, vZ);
+  float grit = texture(tNoise, p * 5.3).r - 0.5;
+  float ckM2 = texture(tNoise, p * 0.071 + 0.83).g;
+  float ckN = abs(texture(tNoise, p * 0.1 + 0.31).g + (texture(tNoise, p * 1.1).r - 0.5) * 0.04 - 0.5), ckM = texture(tNoise, p * 0.037 + 0.4).r;
+  if(nearK > 0.01){
+    col *= 1.0 + grit * 0.1 * nearK;
+    hgt += grit * 0.003 * nearK;
+    // 碎石：一格里至多一粒，大小、形状、深浅各异。路心踏实处少，路边、荒地上多；铺了条石的街面上几乎没有
+    vec2 sdir = normalize(uSun.xz + vec2(1.0e-4));
+    for(int o = 0; o < 2; o++){
+      float cs = o == 0 ? 0.42 : 0.19;
+      vec2 gp = p / cs + float(o) * 17.3, id = floor(gp), f = fract(gp) - 0.5;
+      vec3 h = fract(sin(vec3(dot(id, vec2(127.1, 311.7)), dot(id, vec2(269.5, 183.3)), dot(id, vec2(419.2, 371.9)))) * 43758.5453);
+      // 成堆成片地有：这里一小滩，那里一粒没有（处处匀匀地撒像印花）
+      float dens = mix(0.5, 0.3, sp.r) * (1.0 - pave * 0.85) * (1.0 - gm * 0.82) * smoothstep(0.38, 0.62, ckM2);
+      if(h.z < dens){
+        vec2 c = (h.xy - 0.5) * 0.5;
+        float rad = 0.09 + 0.2 * fract(h.z * 37.0);
+        vec2 q = (f - c) * vec2(1.0, 0.75 + 0.5 * h.x);
+        float d = length(q) / rad, body = 1.0 - smoothstep(0.72, 1.0, d);
+        // 顶上亮些、边上深一圈；背日的一侧在地上留一弯影
+        float sh = (1.0 - smoothstep(0.75, 1.3, length(q + sdir * rad * 0.5) / rad)) * (1.0 - body);
+        // 朝日的一面亮、背日的一面暗：看得出是鼓起来的一粒，不是地上一个圈
+        float face = dot(q / max(rad, 1.0e-4), sdir);
+        vec3 stone = mix(vec3(0.78, 0.76, 0.71), vec3(0.98, 0.96, 0.9), h.y) * (0.92 + 0.2 * face) * (1.0 - 0.12 * smoothstep(0.6, 0.98, d));
+        col = mix(col, stone, body * 0.9 * nearK);
+        col *= 1.0 - 0.3 * sh * nearK;
+        hgt += body * (1.0 - d * d) * 0.014 * nearK;
+      }
+    }
+    // 干裂的细纹：土路上、几片地方才有
+    float crack = (1.0 - smoothstep(0.0015, 0.006, ckN)) * smoothstep(0.5, 0.68, ckM);
+    col *= 1.0 - 0.26 * crack * sp.r * (1.0 - pave) * nearK;
+    hgt -= crack * 0.004 * sp.r * (1.0 - pave) * nearK;
+  }
   col *= mix(vec3(1.0), det, 0.95);
   // 墙根、树下：常年不见日头的地方色深些、带点苔色，房子和树才像是长在地上的
   vec4 aux = texture(tAux, (p - uAuxRect.xy) / uAuxRect.zw);
@@ -575,8 +661,8 @@ void main(){
   col *= 1.0 - 0.22 * (1.0 - smoothstep(0.0, 0.8, sd));
   float bank = 1.0 - smoothstep(0.0, 4.5, sd);
   col *= 1.0 - 0.24 * bank * (0.5 + nz2);
-  vec3 nl = perturb(vWorld, normalize(vNw), hgt * (1.0 - smoothstep(20.0, 60.0, vZ)));
-  col = lightWash(col, nl, 1.0);
+  vec3 ng = normalize(vNw), nl = perturb(vWorld, ng, hgt * (1.0 - smoothstep(20.0, 60.0, vZ)));
+  col = lightWash(col, nl, ng, 1.0);
   col = applyFog(col);
   gColor = vec4(clamp(col * PIG, 0.0, 1.0), 1.0);
   vec3 nv = normalize(vNv);
@@ -669,6 +755,9 @@ const common = () => ({
   uShadowMat: shared.uShadowMat,
   uShadowOn: shared.uShadowOn,
   uShadowPass: shared.uShadowPass,
+  tShadow2: shared.tShadow2,
+  uShadowMat2: shared.uShadowMat2,
+  uShadow2On: shared.uShadow2On,
   uReflPass: shared.uReflPass,
   uWaterY: shared.uWaterY,
   uShadeTint: shared.uShadeTint,
@@ -1267,6 +1356,12 @@ export class InkRenderer {
       this.shadowRT = new THREE.WebGLRenderTarget(SHADOW_SIZE, SHADOW_SIZE, { depthBuffer: true, depthTexture: sd, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
       this.shadowCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 420);
       this.shadowCam.layers.enable(2); // 第 2 层：只投影、不入画（第一人称时自己的身影）
+      // 近处的那张：shadowNear 是它罩住的半径（米），0 即不用；shadowCenter2 是中心
+      const sd2 = new THREE.DepthTexture(SHADOW_SIZE, SHADOW_SIZE);
+      sd2.type = THREE.UnsignedIntType;
+      this.shadowRT2 = new THREE.WebGLRenderTarget(SHADOW_SIZE, SHADOW_SIZE, { depthBuffer: true, depthTexture: sd2, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
+      this.shadowNear = 0;
+      this.shadowCenter2 = new THREE.Vector3();
     }
     const mat = (fs, uniforms) => new THREE.ShaderMaterial({ uniforms, vertexShader: POST_VS, fragmentShader: fs, depthTest: false, depthWrite: false });
     // 纸的那几样：合成与景深两遍共用同一份
@@ -1374,7 +1469,15 @@ export class InkRenderer {
     this.postMat.uniforms.uAoTaps.value = Math.max(1, Math.min(8, v));
   }
   renderShadow(scene) {
-    const cam = this.shadowCam, R = this.shadowRange, sun = shared.uSun.value;
+    this._shadowPass(scene, this.shadowRange, this.shadowCenter, this.shadowRT, shared.tShadow, shared.uShadowMat);
+    shared.uShadowOn.value = 1;
+    if (this.shadowNear > 0) {
+      this._shadowPass(scene, this.shadowNear, this.shadowCenter2, this.shadowRT2, shared.tShadow2, shared.uShadowMat2);
+      shared.uShadow2On.value = 1;
+    } else shared.uShadow2On.value = 0;
+  }
+  _shadowPass(scene, R, center, rt, uTex, uMat) {
+    const cam = this.shadowCam, sun = shared.uSun.value;
     cam.left = -R; cam.right = R; cam.top = R; cam.bottom = -R;
     cam.updateProjectionMatrix();
     // 贴齐纹素网格，行走时影子不闪
@@ -1382,7 +1485,7 @@ export class InkRenderer {
     cam.lookAt(-sun.x, -sun.y, -sun.z);
     cam.updateMatrixWorld();
     _m.copy(cam.matrixWorld).invert();
-    _t.copy(this.shadowCenter).applyMatrix4(_m);
+    _t.copy(center).applyMatrix4(_m);
     const tx = (2 * R) / SHADOW_SIZE;
     _t.x = Math.round(_t.x / tx) * tx;
     _t.y = Math.round(_t.y / tx) * tx;
@@ -1390,16 +1493,18 @@ export class InkRenderer {
     cam.position.copy(_t).addScaledVector(sun, 200);
     cam.updateMatrixWorld();
     cam.matrixWorldInverse.copy(cam.matrixWorld).invert();
-    const r = this.renderer;
+    const r = this.renderer, was = uTex.value;
+    // 画投影的这一遍里两张投影图都不能当贴图用（正往其中一张里画）
     shared.tShadow.value = null;
+    shared.tShadow2.value = null;
     shared.uShadowPass.value = 1;
-    r.setRenderTarget(this.shadowRT);
+    r.setRenderTarget(rt);
     r.clear(true, true, false);
     r.render(scene, cam);
     shared.uShadowPass.value = 0;
-    shared.tShadow.value = this.shadowRT.depthTexture;
-    shared.uShadowMat.value.multiplyMatrices(_bias, _m.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse));
-    shared.uShadowOn.value = 1;
+    uTex.value = rt.depthTexture;
+    if (uTex !== shared.tShadow) shared.tShadow.value = this.shadowRT.depthTexture;
+    uMat.value.multiplyMatrices(_bias, _m.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse));
   }
   // 倒影：把镜头翻到水面之下再画一遍
   renderReflection(scene, camera) {
