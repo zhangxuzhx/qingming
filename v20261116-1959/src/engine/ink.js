@@ -50,6 +50,8 @@ export const shared = {
   tRefl: { value: null },
   uReflMat: { value: new THREE.Matrix4() },
   uReflOn: { value: 0 },
+  // 跨帧累积时整幅画面每帧的微移（裁剪坐标）；自己会动的东西在顶点着色器里把它减回去
+  uJit: { value: new THREE.Vector2() },
   // 河道：到岸距离、流向、半宽（见 river.js）
   tRiver: { value: riverTexture() },
   uRiverRect: { value: new THREE.Vector4(RIVER_RECT.x0, RIVER_RECT.z0, RIVER_RECT.w, RIVER_RECT.h) },
@@ -203,6 +205,7 @@ attribute vec2 aInk;
 attribute vec4 aLife;
 #endif
 uniform float uTime;
+uniform vec2 uJit;
 varying vec3 vWorld;
 varying vec3 vObj;
 varying vec3 vNw;
@@ -211,6 +214,7 @@ varying vec2 vUv;
 varying vec3 vCol;
 varying vec2 vInk;
 varying float vZ;
+varying float vWw;
 void main(){
   mat4 mm = modelMatrix;
   vObj = position;
@@ -222,9 +226,11 @@ void main(){
   ${LIFE_GLSL}
   #endif
   vec4 wp = mm * vec4(pos, 1.0);
+  vWw = 0.0;
   #ifdef WIND
   float ph = wp.x*0.37 + wp.z*0.29;
   float ww = aCol.a;
+  vWw = ww;
   wp.x += (sin(uTime*1.25+ph) + 0.5*sin(uTime*2.7+ph*1.7)) * 0.17 * ww;
   wp.z += cos(uTime*1.05+ph*1.3) * 0.13 * ww;
   #endif
@@ -237,6 +243,10 @@ void main(){
   vCol = aCol.rgb;
   vInk = aInk;
   gl_Position = projectionMatrix * mv;
+  #ifdef DYN
+  // 自己会走会飞的（行人、飞鸟、秋千）不参加跨帧累积，也就不跟着画面逐帧微移——否则只会原地发抖
+  gl_Position.xy -= uJit * gl_Position.w;
+  #endif
 }
 `;
 
@@ -314,6 +324,7 @@ varying vec2 vUv;
 varying vec3 vCol;
 varying vec2 vInk;
 varying float vZ;
+varying float vWw;
 const float PIG = 0.8;
 // 烟霭：远处化入一层薄雾，高处淡些
 vec3 applyFog(vec3 col){
@@ -465,7 +476,17 @@ void main(){
   col *= uFogCol / vec3(1.085, 1.06, 1.015);
   #endif
   if(uGhost > 0.5) col = mix(col, uGhost > 1.5 ? vec3(0.9,0.4,0.32) : vec3(0.6,0.85,0.55), 0.4);
-  gColor = vec4(clamp(col * PIG, 0.0, 1.0), 1.0);
+  // 透明度一栏留给跨帧累积：0 = 自己会动的，不累积；其余 = 1 − 0.9×随风摆动的幅度（据此推算上一帧它在哪儿）
+  // （画倒影那一遍例外：水面拿透明度当“这里有没有倒影”用，照旧写 1）
+  #ifdef DYN
+  gColor = vec4(clamp(col * PIG, 0.0, 1.0), uReflPass > 0.5 ? 1.0 : 0.0);
+  #else
+  gColor = vec4(clamp(col * PIG, 0.0, 1.0), uReflPass > 0.5 ? 1.0 : 1.0 - 0.9 * clamp(vWw, 0.0, 1.0));
+  #endif
+  #ifdef UP_N
+  // 勾线时只当它是朝天的面：与地面相接处不出折线。河岸的上沿是一条又长又直的线，镜头一动就在像素格子上一跳一跳
+  nv = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
+  #endif
   #ifdef FLAT_N
   gNormal = vec4(0.5, 0.5, vInk.y, vInk.x);
   #else
@@ -653,6 +674,7 @@ const common = () => ({
   uLamp: shared.uLamp,
   uCloudSh: shared.uCloudSh,
   uMist: shared.uMist,
+  uJit: shared.uJit,
 });
 const skyUniforms = () => ({
   uSkyHor: shared.uSkyHor,
@@ -680,6 +702,8 @@ export function inkMat(o = {}) {
   if (o.fade) defines.FADE = '';
   if (o.inkFade) defines.INKFADE = '';
   if (o.nightGlow) defines.NIGHTGLOW = '';
+  if (o.upN) defines.UP_N = '';
+  if (o.dyn) defines.DYN = '';
   const m = new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3,
     defines,
@@ -712,7 +736,26 @@ export function cloneInk(mat) {
   const m = mat.clone();
   Object.assign(m.uniforms, common());
   m.uniforms.map = { value: mat.uniforms.map.value };
+  m.defaultAttributeValues = { ...mat.defaultAttributeValues };
   return m;
+}
+
+// 把一组东西标成“自己会动的”：行人、主角、飞鸟、秋千。它们不参加跨帧累积（没有逐物的位移记录，累积了会拖影），
+// 仍按老办法一帧一帧地画。做法是换用带 DYN 记号的同款材质（每种材质只多一份）
+const _dynMats = new Map();
+export function markDynamic(root) {
+  root.traverse((o) => {
+    const m = o.material;
+    if (!m || !m.isShaderMaterial || !m.uniforms || !m.uniforms.map || (m.defines && m.defines.DYN !== undefined)) return;
+    let d = _dynMats.get(m);
+    if (!d) {
+      d = cloneInk(m);
+      d.defines = { ...m.defines, DYN: '' };
+      _dynMats.set(m, d);
+    }
+    o.material = d;
+  });
+  return root;
 }
 
 function specialMat(fs, uniforms) {
@@ -788,6 +831,8 @@ uniform float uSSR;
 uniform float uOpaque;
 uniform float uExpose;
 uniform float uRaw;
+uniform float uTaa;
+uniform float uSpin;
 varying vec2 vUv;
 ${PAPER_GLSL}
 ${SKY_GLSL}
@@ -838,7 +883,8 @@ void main(){
   float edge = max(eD, max(eN * 0.72, eI * 0.55));
   float fogZ = exp(-zMin*zMin*uFogK);
   float ink = edge * lw * mix(0.08, 1.0, fogZ);
-  ink *= 0.5 + 0.7*pp.r;
+  // 纸纹颗粒是钉在屏幕上的：开着跨帧累积时不在这里乘（景物一动它就被抹匀，一停又浮出来），留给上纸那一步
+  ink *= mix(0.5 + 0.7*pp.r, 0.85, uTaa);
   ink *= mix(0.5, 1.0, smoothstep(0.75, 1.35, press));
   ink = clamp(ink, 0.0, 1.0);
 
@@ -877,7 +923,7 @@ void main(){
     N.z = sqrt(max(0.0, 1.0 - dot(N.xy, N.xy)));
     float rw = 0.85;
     float ruv = min(0.08, rw / (z0 * uProj.y * 2.0));
-    float rot = fract(sin(dot(frag, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831;
+    float rot = fract(fract(sin(dot(frag, vec2(12.9898, 78.233))) * 43758.5453) + uSpin) * 6.2831;
     float ao = 0.0;
     for(int i = 0; i < 8; i++){
       if(float(i) >= uAoTaps) break;
@@ -916,6 +962,8 @@ uniform float uNear;
 uniform float uFar;
 uniform vec4 uDof;
 uniform float uNearK;
+uniform float uZa;
+uniform float uSharp;
 varying vec2 vUv;
 ${PAPER_GLSL}
 float zOf(float d){ return uNear*uFar / (uFar - d*(uFar - uNear)); }
@@ -930,10 +978,19 @@ void main(){
   vec2 pc = frag / (1024.0 * max(sc, 0.75));
   vec4 pp = texture2D(tPaper, pc);
   vec2 px = 1.0 / uRes;
-  vec3 c0 = texture2D(tA, vUv).rgb;
+  vec4 s0 = texture2D(tA, vUv);
+  vec3 c0 = s0.rgb;
+  if(uSharp > 0.0){
+    // 叠过若干帧的画面略软：把与四邻的差放大一点补回来，但不许超出四邻的明暗范围（不出白边黑边）
+    vec3 n1 = texture2D(tA, vUv + vec2(px.x, 0.0)).rgb, n2 = texture2D(tA, vUv - vec2(px.x, 0.0)).rgb;
+    vec3 n3 = texture2D(tA, vUv + vec2(0.0, px.y)).rgb, n4 = texture2D(tA, vUv - vec2(0.0, px.y)).rgb;
+    vec3 lo = min(c0, min(min(n1, n2), min(n3, n4))), hi = max(c0, max(max(n1, n2), max(n3, n4)));
+    c0 = clamp(c0 + (c0 - (n1 + n2 + n3 + n4) * 0.25) * uSharp, lo, hi);
+  }
   vec3 col = c0;
   if(uDof.y > 0.01){
-    float z0 = zOf(texture2D(tDepth, vUv).x);
+    // 开着跨帧累积时深度取叠匀了的那份（存在透明度里）：逐帧微移的原始深度在物体边上忽前忽后，虚实会跟着跳
+    float z0 = uZa > 0.5 ? s0.a : zOf(texture2D(tDepth, vUv).x);
     float coc0 = cocOf(z0), R = coc0;
     // 逐像素把取样的圆盘转一个角度：用交错梯度噪声，颗粒比白噪声匀净
     float rot = fract(52.9829189 * fract(dot(floor(frag), vec2(0.06711056, 0.00583715)))) * 6.2831;
@@ -942,7 +999,8 @@ void main(){
       float probe = uDof.y * uNearK * sc * 0.7;
       for(int i = 0; i < 6; i++){
         float a = float(i) * 1.0472 + rot;
-        float zs = zOf(texture2D(tDepth, vUv + vec2(cos(a), sin(a)) * probe * px).x);
+        vec2 pu = vUv + vec2(cos(a), sin(a)) * probe * px;
+        float zs = uZa > 0.5 ? texture2D(tA, pu).a : zOf(texture2D(tDepth, pu).x);
         if(zs < z0) R = max(R, cocOf(zs) * 0.8);
       }
     }
@@ -954,16 +1012,108 @@ void main(){
         float rr = sqrt(fi / 24.0) * R;
         float a = fi * 2.39996 + rot;
         vec2 uv = vUv + vec2(cos(a), sin(a)) * rr * sc * px;
-        float zs = zOf(texture2D(tDepth, uv).x);
+        vec4 sm = texture2D(tA, uv);
+        float zs = uZa > 0.5 ? sm.a : zOf(texture2D(tDepth, uv).x);
         // 比这里近的：它自己虚到这么远才漫得过来；不比这里近的：这里自己得虚到这么远才取它
         float w = zs < z0 * 0.98 ? clamp(cocOf(zs) - rr + 1.0, 0.0, 1.0) : clamp(coc0 - rr + 1.0, 0.0, 1.0);
-        acc += texture2D(tA, uv).rgb * w;
+        acc += sm.rgb * w;
         wsum += w;
       }
       col = acc / wsum;
     }
   }
   gl_FragColor = vec4(onPaper(col / 0.8, vUv, pc, pp), 1.0);
+}
+`;
+
+// 跨帧累积（TAA）：整幅画面每帧挪不到半个像素地画，再把这一帧与前面若干帧叠在一起——前面的帧按“景物上一帧在屏幕上哪儿”取回来。
+// 墨线是贴着像素格子勾的，单看一帧只能落在整格上；叠起来之后才能停在半格、小半格上，镜头慢慢移动时不再一格一格地跳。
+// 景物上一帧在哪儿：不动的东西由深度与两帧的镜头位置算出；随风摆的枝叶再减去这一帧里风吹出的那点位移；
+// 自己会走会飞的不叠（见 markDynamic）。透明度里顺带叠一份深度，给景深用。
+const TAA_FS = /* glsl */ `
+precision highp float;
+uniform sampler2D tA;
+uniform highp sampler2D tHist;
+uniform sampler2D tDepth;
+uniform sampler2D tColor;
+uniform vec2 uRes;
+uniform vec2 uProj;
+uniform vec2 uPrevProj;
+uniform mat3 uCamRot;
+uniform mat3 uPrevRotInv;
+uniform vec3 uCamPos;
+uniform vec3 uCamMove;
+uniform float uNear;
+uniform float uFar;
+uniform float uTime;
+uniform float uDt;
+uniform float uBlend;
+uniform int uTap;
+varying vec2 vUv;
+const ivec2 OFF[8] = ivec2[8](ivec2(-1, -1), ivec2(1, -1), ivec2(-1, 1), ivec2(1, 1), ivec2(-1, 0), ivec2(1, 0), ivec2(0, -1), ivec2(0, 1));
+float zOf(float d){ return uNear*uFar / (uFar - d*(uFar - uNear)); }
+// 与顶点着色器里的风一致
+vec3 windAt(vec3 wp, float t){
+  float ph = wp.x*0.37 + wp.z*0.29;
+  return vec3((sin(t*1.25+ph) + 0.5*sin(t*2.7+ph*1.7)) * 0.17, 0.0, cos(t*1.05+ph*1.3) * 0.13);
+}
+// 取上一帧：五点的 Catmull-Rom，比双线性清楚——镜头一直在动时不至于越叠越糊
+vec4 histAt(vec2 uv){
+  vec2 sp = uv * uRes;
+  vec2 t1 = floor(sp - 0.5) + 0.5;
+  vec2 f = sp - t1;
+  vec2 w0 = f * (-0.5 + f * (1.0 - 0.5*f));
+  vec2 w1 = 1.0 + f*f * (-2.5 + 1.5*f);
+  vec2 w2 = f * (0.5 + f * (2.0 - 1.5*f));
+  vec2 w3 = f*f * (-0.5 + 0.5*f);
+  vec2 w12 = w1 + w2;
+  vec2 t0 = (t1 - 1.0) / uRes, t3 = (t1 + 2.0) / uRes, t12 = (t1 + w2 / w12) / uRes;
+  float a = w12.x*w0.y, b = w0.x*w12.y, c = w12.x*w12.y, d = w3.x*w12.y, e = w12.x*w3.y;
+  vec4 s = texture2D(tHist, vec2(t12.x, t0.y)) * a + texture2D(tHist, vec2(t0.x, t12.y)) * b + texture2D(tHist, t12) * c
+         + texture2D(tHist, vec2(t3.x, t12.y)) * d + texture2D(tHist, vec2(t12.x, t3.y)) * e;
+  return s / (a + b + c + d + e);
+}
+void main(){
+  ivec2 res = ivec2(uRes);
+  ivec2 ip = clamp(ivec2(vUv * uRes), ivec2(0), res - 1);
+  vec4 cur = texelFetch(tA, ip, 0);
+  float dC = texelFetch(tDepth, ip, 0).x;
+  float aC = texelFetch(tColor, ip, 0).a;
+  // 在勾线够得着的范围里找最靠前的那一处：物体边上的线有一半画在背景上，得跟着前面的物体走
+  float dn = dC, an = aC, dlo = dC, dhi = dC;
+  bool dyn = aC < 0.05;
+  vec3 lo = cur.rgb, hi = cur.rgb;
+  for(int i = 0; i < 8; i++){
+    ivec2 q = clamp(ip + OFF[i] * uTap, ivec2(0), res - 1);
+    float d = texelFetch(tDepth, q, 0).x;
+    float a = texelFetch(tColor, q, 0).a;
+    if(a < 0.05 && d <= dC) dyn = true;
+    if(d < dn){ dn = d; an = a; }
+    dlo = min(dlo, d);
+    dhi = max(dhi, d);
+    vec3 c = texelFetch(tA, clamp(ip + OFF[i], ivec2(0), res - 1), 0).rgb;
+    lo = min(lo, c);
+    hi = max(hi, c);
+  }
+  float zC = zOf(dC);
+  if(dyn || uBlend > 0.99){ gl_FragColor = vec4(cur.rgb, zC); return; }
+  float z = zOf(dn);
+  // 以镜头为原点、按世界方向摆的位置
+  vec3 rel = uCamRot * vec3((vUv*2.0 - 1.0) * uProj * z, -z);
+  vec3 was = rel + uCamMove;
+  float ww = (1.0 - an) / 0.9;
+  if(ww > 0.004){
+    vec3 wp = rel + uCamPos;
+    was -= (windAt(wp, uTime) - windAt(wp, uTime - uDt)) * ww;
+  }
+  vec3 pv = uPrevRotInv * was;
+  vec2 puv = (pv.xy / max(-pv.z, 1e-4)) / uPrevProj * 0.5 + 0.5;
+  if(pv.z > -uNear || puv.x < 0.0 || puv.x > 1.0 || puv.y < 0.0 || puv.y > 1.0){ gl_FragColor = vec4(cur.rgb, zC); return; }
+  vec4 h = histAt(puv);
+  // 上一帧取回来的颜色若落在这一帧周围八格的范围之外，就是取错了（那里上一帧被别的东西挡着），拉回范围里
+  vec3 hc = clamp(h.rgb, lo, hi);
+  float hz = clamp(h.a, zOf(dlo), zOf(dhi));
+  gl_FragColor = vec4(mix(hc, cur.rgb, uBlend), mix(hz, zC, uBlend));
 }
 `;
 
@@ -1023,6 +1173,8 @@ uniform sampler2D tRays;
 uniform vec2 uPx;
 uniform vec3 uRayCol;
 uniform float uBloom;
+uniform sampler2D tColor;
+uniform float uTaa;
 varying vec2 vUv;
 void main(){
   vec3 L = vec3(0.299, 0.587, 0.114);
@@ -1038,6 +1190,11 @@ void main(){
   vec3 B = A*0.5 + 0.25 * (texture2D(tA, vUv - dir*0.5).rgb + texture2D(tA, vUv + dir*0.5).rgb);
   float lB = dot(B, L);
   vec3 col = (lB < lMin || lB > lMax) ? A : B;
+  if(uTaa > 0.5){
+    // 跨帧累积过的地方边缘已经是匀的，再抹一遍只会糊；只有不参加累积的（行人、飞鸟……）还靠这一遍
+    float dynA = min(texture2D(tColor, vUv).a, min(min(texture2D(tColor, vUv + uPx*vec2(-1.5, -1.5)).a, texture2D(tColor, vUv + uPx*vec2(1.5, -1.5)).a), min(texture2D(tColor, vUv + uPx*vec2(-1.5, 1.5)).a, texture2D(tColor, vUv + uPx*vec2(1.5, 1.5)).a)));
+    if(dynA > 0.05) col = cM;
+  }
   // 滤色叠加：亮处不过曝，暗处被邻近的亮光晕开
   col += texture2D(tBloom, vUv).rgb * uBloom * (1.0 - col);
   col += uRayCol * texture2D(tRays, vUv).r * (1.0 - col * 0.6);
@@ -1045,6 +1202,8 @@ void main(){
 }
 `;
 
+// 画面逐帧微移的八个位置（Halton 2、3 序列，单位：像素，-0.5~0.5）
+const JITTER = [[0, -1 / 6], [-0.25, 1 / 6], [0.25, -7 / 18], [-0.375, -1 / 18], [0.125, 5 / 18], [-0.125, -5 / 18], [0.375, 1 / 18], [-0.4375, 7 / 18]];
 const _m = new THREE.Matrix4(), _bias = new THREE.Matrix4().set(0.5, 0, 0, 0.5, 0, 0.5, 0, 0.5, 0, 0, 0.5, 0.5, 0, 0, 0, 1);
 const _t = new THREE.Vector3(), _up = new THREE.Vector3(), _d = new THREE.Vector3(), _v4 = new THREE.Vector4();
 
@@ -1055,7 +1214,7 @@ export class InkRenderer {
     const r = (this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false, depth: false, stencil: false, powerPreference: 'high-performance', preserveDrawingBuffer: false }));
     r.outputColorSpace = THREE.LinearSRGBColorSpace;
     r.autoClear = false;
-    // 至少按 1.5 倍像素来画，再由浏览器缩回去：墨线是贴着像素格子走的，格子细了，线随镜头移动时一跳才半个像素，也不那么硬
+    // 像素倍率：见下面“跨帧累积”——开得了就照屏幕原生的分辨率画，开不了才多画一半像素来压锯齿
     this.pixelRatio = Math.min(Math.max(window.devicePixelRatio || 1, 1.5), 2);
     this.maxPixels = 6.2e6; // 画面像素上限，超大屏幕上自动降一点渲染分辨率
     this.reflect = reflect;
@@ -1072,6 +1231,21 @@ export class InkRenderer {
     this.rtQ1 = plain();
     this.rtQ2 = plain();
     this.rtRays = plain();
+    // 跨帧累积：两张半浮点的图轮流当“上一帧”与“这一帧”（八位的存不住一成一成叠上去的细微变化）。显卡不支持就不开
+    this.taa = fx;
+    this.taaBlend = 0.1; // 每帧新画面占的份量
+    this.taaSharp = 0.5; // 叠完之后补回的清晰度
+    this.hist = null;
+    if (fx && (r.extensions.has('EXT_color_buffer_float') || r.extensions.has('EXT_color_buffer_half_float'))) {
+      const hf = () => new THREE.WebGLRenderTarget(4, 4, { depthBuffer: false, type: THREE.HalfFloatType, format: THREE.RGBAFormat, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: false });
+      this.hist = [hf(), hf()];
+      // 线的平滑交给累积去做，比多画像素省得多：2K、4K 的大屏上少画一半以上的像素，帧率才稳
+      this.pixelRatio = Math.min(Math.max(window.devicePixelRatio || 1, 1), 2);
+    }
+    this._hi = 0;
+    this._jit = 0;
+    this._taaReset = true;
+    this._prev = { rot: new THREE.Matrix3(), pos: new THREE.Vector3(), dir: new THREE.Vector3(0, 0, -1), proj: new THREE.Vector2(1, 1), time: 0 };
     // 倒影
     this.reflRT = new THREE.WebGLRenderTarget(4, 4, { depthBuffer: true, type: THREE.UnsignedByteType, format: THREE.RGBAFormat, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: false });
     this.reflCam = new THREE.PerspectiveCamera();
@@ -1124,20 +1298,28 @@ export class InkRenderer {
       uSSR: { value: ssr && !reflect ? 1 : 0 },
       uOpaque: { value: 0 },
       uExpose: { value: 1 },
+      uTaa: { value: 0 },
+      uSpin: { value: 0 },
     });
     // 景深：focus 焦点距离（米）；aper 最大弥散半径（1080 线下的像素，0 即关）；tol / nearTol 远、近景开始虚的门槛；nearK 近景虚化的倍数
     this.dof = { focus: 9, aper: 3.2, tol: 0.6, nearTol: 3.2, nearK: 1.2 };
     const pu = this.postMat.uniforms;
     this.dofMat = mat(DOF_FS, {
       tA: { value: this.rtA.texture }, tDepth: { value: depthTexture }, ...paperU,
-      uRes: pu.uRes, uNear: pu.uNear, uFar: pu.uFar, uDof: { value: new THREE.Vector4(9, 0, 0.6, 3.2) }, uNearK: { value: 1 },
+      uRes: pu.uRes, uNear: pu.uNear, uFar: pu.uFar, uDof: { value: new THREE.Vector4(9, 0, 0.6, 3.2) }, uNearK: { value: 1 }, uZa: { value: 0 }, uSharp: { value: 0 },
+    });
+    this.taaMat = mat(TAA_FS, {
+      tA: { value: this.rtA.texture }, tHist: { value: null }, tDepth: { value: depthTexture }, tColor: { value: this.rt.textures[0] },
+      uRes: pu.uRes, uProj: pu.uProj, uPrevProj: { value: new THREE.Vector2(1, 1) }, uCamRot: pu.uCamRot, uPrevRotInv: { value: new THREE.Matrix3() },
+      uCamPos: { value: new THREE.Vector3() }, uCamMove: { value: new THREE.Vector3() }, uNear: pu.uNear, uFar: pu.uFar,
+      uTime: { value: 0 }, uDt: { value: 0 }, uBlend: { value: 1 }, uTap: { value: 2 },
     });
     this.raysMat = mat(RAYS_FS, { tA: { value: this.rtB.texture }, uSunUV: { value: new THREE.Vector2(0.5, 0.5) }, uAspect: { value: 1 } });
     this.brightMat = mat(BRIGHT_FS, { tA: { value: this.rtB.texture }, uPx: { value: new THREE.Vector2() } });
     this.blurMat = mat(BLUR_FS, { tA: { value: null }, uDir: { value: new THREE.Vector2() } });
     this.finalMat = mat(FINAL_FS, {
       tA: { value: this.rtB.texture }, tBloom: { value: this.rtQ1.texture }, tRays: { value: this.rtRays.texture },
-      uPx: { value: new THREE.Vector2() }, uRayCol: { value: new THREE.Vector3() }, uBloom: { value: 0.3 },
+      uPx: { value: new THREE.Vector2() }, uRayCol: { value: new THREE.Vector3() }, uBloom: { value: 0.3 }, tColor: { value: this.rt.textures[0] }, uTaa: { value: 0 },
     });
     const tri = new THREE.BufferGeometry();
     tri.setAttribute('position', new THREE.Float32BufferAttribute([-1, -1, 0, 3, -1, 0, -1, 3, 0], 3));
@@ -1163,6 +1345,10 @@ export class InkRenderer {
     this.rtQ2.setSize(qw, qh);
     this.rtRays.setSize(qw, qh);
     this.reflRT.setSize(Math.max(2, pw >> 1), Math.max(2, ph >> 1));
+    if (this.hist) {
+      for (const h of this.hist) h.setSize(pw, ph);
+      this._taaReset = true; // 尺寸变了，前面叠的作废
+    }
     this.postMat.uniforms.uRes.value.set(pw, ph);
     this.finalMat.uniforms.uPx.value.set(1 / pw, 1 / ph);
     this.brightMat.uniforms.uPx.value.set(1 / pw, 1 / ph);
@@ -1246,7 +1432,8 @@ export class InkRenderer {
     this.renderer.setRenderTarget(target);
     this.renderer.render(this.postScene, this.postCam);
   }
-  render(scene, camera) {
+  // blend：这一帧新画面占的份量，不给则用 taaBlend（留影时逐帧给 1/2、1/3……，等于把几帧取平均）
+  render(scene, camera, blend) {
     const r = this.renderer, u = this.postMat.uniforms;
     if (this.shadows && this._frame++ % this.shadowEvery === 0) this.renderShadow(scene);
     camera.updateMatrixWorld();
@@ -1261,11 +1448,58 @@ export class InkRenderer {
     r.setRenderTarget(this.rt);
     r.setClearColor(0xffffff, 1);
     r.clear(true, true, false);
-    r.render(scene, camera);
+    const taa = this.fx && this.taa && !!this.hist;
+    if (taa) {
+      // 整幅画面挪不到半个像素：八帧一轮，各帧落在一个像素里的不同位置
+      const j = JITTER[(this._jit = (this._jit + 1) % JITTER.length)], e = camera.projectionMatrix.elements;
+      const sx = (2 * j[0]) / this.rt.width, sy = (2 * j[1]) / this.rt.height;
+      e[8] -= sx;
+      e[9] -= sy;
+      shared.uJit.value.set(sx, sy);
+      r.render(scene, camera);
+      e[8] += sx;
+      e[9] += sy;
+      shared.uJit.value.set(0, 0);
+    } else r.render(scene, camera);
     u.uOpaque.value = this.fx ? 0 : 1;
     u.uRaw.value = this.fx ? 1 : 0;
+    u.uTaa.value = taa ? 1 : 0;
+    u.uSpin.value = taa ? (this._frame * 0.6180339887) % 1 : 0;
     if (!this.fx) return this._pass(this.postMat, null);
     this._pass(this.postMat, this.rtA);
+    // 跨帧累积
+    const PV = this._prev, DU = this.dofMat.uniforms;
+    camera.getWorldDirection(_d);
+    if (taa) {
+      const q = this.taaMat.uniforms, pos = camera.position;
+      // 镜头一下子换了地方（进出片头、传送、急转）：前面叠的不作数，从这一帧重新叠
+      const cut = this._taaReset || pos.distanceToSquared(PV.pos) > 36 || _d.dot(PV.dir) < 0.86;
+      q.uBlend.value = cut ? 1 : blend ?? this.taaBlend;
+      q.uPrevRotInv.value.copy(PV.rot).transpose();
+      q.uPrevProj.value.copy(PV.proj);
+      q.uCamPos.value.copy(pos);
+      q.uCamMove.value.subVectors(pos, PV.pos);
+      q.uTime.value = shared.uTime.value;
+      q.uDt.value = cut ? 0 : shared.uTime.value - PV.time;
+      q.uTap.value = Math.max(1, Math.floor((u.uLine.value * this.rt.height) / 1080 + 0.5)) + 1;
+      q.tHist.value = this.hist[this._hi].texture;
+      this._hi = 1 - this._hi;
+      this._pass(this.taaMat, this.hist[this._hi]);
+      DU.tA.value = this.hist[this._hi].texture;
+      DU.uZa.value = 1;
+      DU.uSharp.value = this.taaSharp;
+      this._taaReset = false;
+    } else {
+      DU.tA.value = this.rtA.texture;
+      DU.uZa.value = 0;
+      DU.uSharp.value = 0;
+      this._taaReset = true;
+    }
+    PV.rot.copy(u.uCamRot.value);
+    PV.pos.copy(camera.position);
+    PV.dir.copy(_d);
+    PV.proj.copy(u.uProj.value);
+    PV.time = shared.uTime.value;
     // 景深，然后上纸
     const D = this.dof, dq = this.dofMat.uniforms;
     dq.uDof.value.set(Math.max(0.3, D.focus), D.aper, D.tol, D.nearTol);
@@ -1295,6 +1529,7 @@ export class InkRenderer {
       this._pass(this.blurMat, this.rtQ1);
     }
     f.uBloom.value = post.bloom;
+    f.uTaa.value = taa ? 1 : 0;
     this._pass(this.finalMat, null);
   }
 }

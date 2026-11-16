@@ -6,7 +6,7 @@ import { Batch } from '../engine/batch.js';
 import { FACE, FACE_DEFS, faceUV, headU, HAIRLINE, hairlineAt, HEAD_Y0, HEAD_Y1 } from '../engine/textures.js';
 import { NODES, adjacency, edgeWidth, groundY, colliders } from './layout.js';
 import { angDiff } from '../util.js';
-import { shared, lifeMotion } from '../engine/ink.js';
+import { shared, lifeMotion, markDynamic } from '../engine/ink.js';
 
 export const ROBES = [[1.12, 1.1, 1.05], [1.06, 1.04, 0.99], [0.8, 0.84, 0.86], [0.92, 0.87, 0.76], [0.85, 0.89, 0.83], [0.78, 0.76, 0.73], [1.0, 0.96, 0.88], [0.72, 0.78, 0.82], [1.1, 1.08, 1.02], [0.88, 0.8, 0.74]];
 export const ROBES_W = [[0.95, 0.74, 0.7], [1.06, 0.96, 0.93], [0.84, 0.9, 0.8], [0.88, 0.84, 0.92], [1.08, 1.03, 0.9], [0.78, 0.87, 0.9]];
@@ -816,7 +816,7 @@ export class Crowd {
       const look = this.variants[i % this.variants.length];
       const grp = makeFigure(this.mats, look, { walk: true }), far = makeFigure(this.mats, look, { far: true });
       far.visible = false;
-      this.scene.add(far);
+      this.scene.add(markDynamic(far));
       let t = rng.f(0.05, 0.95);
       const [ax, az] = NODES[e[0]], [bx, bz] = NODES[e[1]];
       const slow = look.face === FACE.elder || look.prop === 'pole' ? 0.82 : 1;
@@ -834,7 +834,7 @@ export class Crowd {
       w.yaw = Math.atan2(w.tx - w.x, w.tz - w.z);
       grp.position.set(w.x, groundY(w.x, w.z), w.z);
       grp.rotation.y = w.yaw;
-      this.scene.add(grp);
+      this.scene.add(markDynamic(grp));
       this.walkers.push(w);
     }
   }

@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { RNG } from '../util.js';
 import { Batch, buildObject } from '../engine/batch.js';
-import { inkMat, groundMat, waterMat, shared } from '../engine/ink.js';
+import { inkMat, groundMat, waterMat, shared, markDynamic } from '../engine/ink.js';
 import { SignAtlas, mkCanvas, toTex } from '../engine/textures.js';
 import { RV, riverSD, CHANNELS } from './river.js';
 import { meadow } from './cover.js';
@@ -28,7 +28,7 @@ function makeMaterials(tex, atlas) {
     brick: inkMat({ map: tex.brick, world: true, scale: 0.42, side: D, weather: true, bump: 0.014 }),
     stone: inkMat({ map: tex.stone, world: true, scale: 0.3, side: D, bump: 0.012 }),
     mat: inkMat({ map: tex.mat, world: true, scale: 0.55, side: D }),
-    bank: inkMat({ map: tex.bank, world: true, scale: 0.2, side: D }),
+    bank: inkMat({ map: tex.bank, world: true, scale: 0.2, side: D, upN: true }),
     bark: inkMat({ map: tex.bark, world: true, scale: 0.4, side: D, bump: 0.03 }),
     lattice: inkMat({ map: tex.lattice, world: true, scale: 1.1, side: D, nightGlow: true }),
     cloth: inkMat({ map: tex.cloth, world: true, scale: 0.9, side: D, tint: [1.06, 1.06, 1.04] }),
@@ -396,14 +396,18 @@ export function buildWorld(scene, tex) {
     for (const ch of CHANNELS) {
       const P0 = ch.pts, n = P0.length, slope = Math.min(1.25, ch.hw * 0.4);
       for (const side of [1, -1]) {
-        const PP = [], IDX = [];
+        const PP = [], IDX = [], COL = [];
         for (let i = 0; i < n; i++) {
           const a = P0[Math.max(0, i - 1)], c2 = P0[Math.min(n - 1, i + 1)], l = Math.hypot(c2[0] - a[0], c2[1] - a[1]) || 1;
           const nx = (-(c2[1] - a[1]) / l) * side, nz = ((c2[0] - a[0]) / l) * side, c = P0[i];
           PP.push(c[0] + nx * (ch.hw + 0.08), 0.02, c[1] + nz * (ch.hw + 0.08), c[0] + nx * (ch.hw - slope), RV.WATER_Y - 0.4, c[1] + nz * (ch.hw - slope));
           if (i < n - 1) IDX.push(i * 2, i * 2 + 1, i * 2 + 2, i * 2 + 2, i * 2 + 1, i * 2 + 3);
+          // 岸坡的上沿取岸上地面的颜色（长草处偏绿、街市处是土色），往水里渐渐变浅：岸与地之间不留一条硬边
+          const gm = meadow(c[0] + nx * (ch.hw + 1.5), c[1] + nz * (ch.hw + 1.5));
+          COL.push(0.9 - 0.22 * gm, 0.88 - 0.1 * gm, 0.8 - 0.24 * gm, 0.9, 0.89, 0.87);
         }
-        b.raw('bank', PP, null, IDX, { lw: 0.85, color: [0.9, 0.89, 0.87], double: true });
+        // 与地面同一个勾线编号：岸沿不出线，只在近处的水线上有一道
+        b.raw('bank', PP, null, IDX, { lw: 0.85, colors: COL, id: 0.012, double: true });
       }
     }
   }
@@ -496,7 +500,7 @@ export function buildWorld(scene, tex) {
     o.frustumCulled = false;
     o.layers.set(1);
   });
-  scene.add(birds);
+  scene.add(markDynamic(birds));
 
   // ── 柳絮与落花：清明时节，随风飘在眼前 ──
   const NC = 200, seeds = new Float32Array(NC * 3), crng = new RNG(303);
@@ -505,13 +509,14 @@ export function buildWorld(scene, tex) {
   cgeo.setAttribute('position', new THREE.BufferAttribute(seeds, 3));
   const catkinMat = new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3,
-    uniforms: { uTime: shared.uTime, uResY: shared.uResY, uCam: { value: new THREE.Vector3() }, uShow: { value: 1 }, uFly: { value: 0 } },
+    uniforms: { uTime: shared.uTime, uResY: shared.uResY, uJit: shared.uJit, uCam: { value: new THREE.Vector3() }, uShow: { value: 1 }, uFly: { value: 0 } },
     vertexShader: /* glsl */ `
       uniform float uTime;
       uniform float uResY;
       uniform vec3 uCam;
       uniform float uShow;
       uniform float uFly;
+      uniform vec2 uJit;
       varying float vK;
       varying float vB;
       void main(){
@@ -526,6 +531,7 @@ export function buildWorld(scene, tex) {
         vB = smoothstep(0.1, 0.5, sin(uTime*(1.3 + s.z*1.6) + s.x*50.0));
         vec4 mv = viewMatrix * vec4(p, 1.0);
         gl_Position = projectionMatrix * mv;
+        gl_Position.xy -= uJit * gl_Position.w; // 飘着的东西不参加跨帧累积（见 ink.js 的 markDynamic）
         gl_PointSize = uShow * mix(1.0, 1.5, uFly) * clamp(mix(0.035, 0.075, s.z) * projectionMatrix[1][1] * uResY * 0.5 / max(0.3, -mv.z), 1.2, uResY * 0.006);
         vK = s.x;
       }`,
@@ -542,7 +548,7 @@ export function buildWorld(scene, tex) {
         // 落花粉白，柳絮雪白；夜里是萤火的黄绿
         vec3 col = vK > 0.72 ? vec3(1.2, 0.97, 0.97) : vec3(1.22, 1.21, 1.17);
         col = mix(col, vec3(1.25, 1.25, 0.55) * vB, uFly);
-        gColor = vec4(col * 0.8, 1.0);
+        gColor = vec4(col * 0.8, 0.0);
         gNormal = vec4(0.5, 0.5, 0.0, 0.0);
       }`,
   });

@@ -8,6 +8,7 @@ import { ROAD_HW, EAST_Z, BRIDGE, PLANK, DYKE, onRoad, colliders, register } fro
 import * as P from './parts.js';
 import { column } from './timber.js';
 import { buildObject } from '../engine/batch.js';
+import { markDynamic } from '../engine/ink.js';
 import { figure, randomLook } from './figures.js';
 import { FACE } from '../engine/textures.js';
 import { meadow, vnoise } from './cover.js';
@@ -135,7 +136,7 @@ function swing(c, x, z, rot) {
   grp.rotation.order = 'YXZ';
   grp.position.set(x, 3.16 + terrainH(x, z), z);
   grp.rotation.y = rot;
-  c.scene.add(grp);
+  c.scene.add(markDynamic(grp));
   c.dynamic.push((t) => {
     grp.rotation.x = Math.sin(t * 1.95) * 0.42;
   });
@@ -441,7 +442,7 @@ function flyingEgrets(c) {
       bb.rod('flat', [-0.34, 0, 0], [-0.7, -0.01, 0], 0.008, 0.006, 3, { color: [0.3, 0.3, 0.28], lw: 0.3 });
       for (const sz of [-1, 1]) bb.raw('flat', [0.12, 0, 0, -0.16, 0, 0, -0.1, 0.34, sz * 0.86, 0.06, 0.3, sz * 0.8], null, [0, 1, 2, 0, 2, 3], { ...o, double: true });
     });
-    c.scene.add(g);
+    c.scene.add(markDynamic(g));
     birds.push({ g, a: (i / 6) * 0.5 + rng.f(-0.03, 0.03), dy: rng.f(-1.2, 1.2), dr: rng.f(-5, 5), ph: rng.f(6.28) });
   }
   c.dynamic.push((t) => {

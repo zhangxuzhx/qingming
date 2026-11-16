@@ -6,7 +6,7 @@ import { makeFigure, makePlayerAvatar, Crowd, poseHead } from '../world/figures.
 import { HOME, GATE, NODES, POIS, poi, route, nearestNode, groundY, blocked, inRailZone, surfaceAt, outOfBounds, districtAt, colliders, ceilAt } from '../world/layout.js';
 import { mainRiverSD, riverSD, RV } from '../world/river.js';
 import { terrainH } from '../world/terrain.js';
-import { addRipple } from '../engine/ink.js';
+import { addRipple, markDynamic } from '../engine/ink.js';
 import { RNG, mulberry32, clamp, angDiff } from '../util.js';
 
 const SAVE_KEY = 'qingming.save.v1';
@@ -30,14 +30,14 @@ export class Game {
     this.view = 'tp'; // tp 第三人称 / fp 第一人称
     this.camDist = 4.6;
     this.avatar = makePlayerAvatar(world.mats);
-    scene.add(this.avatar);
+    scene.add(markDynamic(this.avatar));
     this.keys = {};
     this.npcs = new Map();
     for (const spec of world.npcs) {
       const grp = makeFigure(world.mats, spec.look, { head: true });
       grp.position.set(spec.x, spec.y ?? groundY(spec.x, spec.z), spec.z);
       grp.rotation.y = spec.yaw;
-      scene.add(grp);
+      scene.add(markDynamic(grp)); // 见人走近会转身转头
       this.npcs.set(spec.id, { spec, grp, yaw: spec.yaw, node: spec.id === 'wife' ? 'h' : nearestNode(spec.x, spec.z, (k) => k !== 'h'), t: Math.random() * 6 });
     }
     for (const [nid, pid] of Object.entries(NPC_POI)) {
@@ -629,7 +629,7 @@ export class Game {
     const p = this.player, ui = this.ui, cam = this.camera;
     if (this.mode !== 'play') {
       // 卷首：自右向左缓缓展卷的俯瞰
-      this.cine -= dt * 2.4; // 展卷要慢：走快了，枝叶细线一帧挪好几个像素，满眼都在闪
+      this.cine -= dt * 1.5; // 展卷要慢：走快了，枝叶细线一帧挪好几个像素，满眼都在闪
       if (this.cine < -372) this.cine = 372;
       cam.fov = 34;
       cam.position.set(this.cine, 52, 96);
