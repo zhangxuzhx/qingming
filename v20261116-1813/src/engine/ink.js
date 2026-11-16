@@ -15,7 +15,7 @@ export const shared = {
   uTime: { value: 0 },
   tNoise: { value: null },
   uResY: { value: 1080 },
-  // 日照与烟霭（随时辰而变，见 setTimeOfDay）
+  // 日照与烟霭（随时辰而变，见 setDayTime）
   uSun: { value: new THREE.Vector3(0.78, 0.47, 0.42).normalize() },
   uSunCol: V3(1.13, 1.065, 0.95),
   uShadeTint: V3(0.57, 0.605, 0.72),
@@ -27,6 +27,10 @@ export const shared = {
   uSunGlow: V3(0.07, 0.05, 0.02),
   uCloudLit: V3(1.2, 1.185, 1.14),
   uCloudShade: V3(0.78, 0.83, 0.93),
+  uDisc: { value: 1 },
+  uStar: { value: 0 },
+  // 入夜亮灯的人家占几成
+  uNight: { value: 0 },
   // 投影
   tShadow: { value: null },
   uShadowMat: { value: new THREE.Matrix4() },
@@ -44,41 +48,92 @@ export const shared = {
 };
 
 // ───────────────────────── 时辰 ─────────────────────────
-// sun 日头方向；sunCol 受光的色；shade 影里的色；其余依次是烟霭、天色、云色、纸色、光柱与辉光
-export const TIMES = {
-  morning: {
-    label: '上午', sun: [0.78, 0.47, 0.42], sunCol: [1.13, 1.065, 0.95], shade: [0.57, 0.605, 0.72], fogD: 175, fogCol: [1.085, 1.06, 1.015],
-    skyHor: [1.1, 1.065, 1.0], skyZen: [0.67, 0.825, 1.05], sunGlow: [0.07, 0.05, 0.02], cloudLit: [1.2, 1.185, 1.14], cloudShade: [0.78, 0.83, 0.93],
-    paper: [1, 1, 1], ray: [0.14, 0.115, 0.07], bloom: 0.3,
-  },
-  noon: {
-    label: '正午', sun: [0.3, 0.88, 0.36], sunCol: [1.1, 1.07, 1.0], shade: [0.6, 0.65, 0.76], fogD: 200, fogCol: [1.07, 1.07, 1.05],
-    skyHor: [1.08, 1.075, 1.05], skyZen: [0.6, 0.79, 1.07], sunGlow: [0.03, 0.03, 0.02], cloudLit: [1.22, 1.21, 1.18], cloudShade: [0.8, 0.86, 0.95],
-    paper: [1, 1, 1.01], ray: [0.05, 0.05, 0.04], bloom: 0.26,
-  },
-  dusk: {
-    label: '黄昏', sun: [-0.9, 0.21, 0.38], sunCol: [1.22, 0.98, 0.7], shade: [0.5, 0.49, 0.67], fogD: 130, fogCol: [1.16, 0.96, 0.76],
-    skyHor: [1.22, 0.93, 0.66], skyZen: [0.62, 0.66, 0.92], sunGlow: [0.28, 0.15, 0.04], cloudLit: [1.25, 1.0, 0.76], cloudShade: [0.62, 0.58, 0.74],
-    paper: [1.0, 0.955, 0.88], ray: [0.32, 0.2, 0.09], bloom: 0.48,
-  },
+// 一昼夜的光色：按钟点（0~24，0 为半夜子正）给出若干关键时刻，其间线性过渡。
+// sunCol 受光的色（夜里是月色）；shade 影里的色；其余依次是烟霭、天色、云色、纸色、光柱与辉光；
+// disc 日月的轮廓显不显；star 星；night 窗里亮灯的人家占几成。
+// 日出日落前后各有一刻 sunCol 与 shade 相同（没有投影），日头与月亮就在那一刻换班。
+const NIGHT = {
+  sunCol: [0.7, 0.77, 0.97], shade: [0.38, 0.43, 0.61], fogD: 140, fogCol: [0.47, 0.53, 0.72],
+  skyHor: [0.52, 0.58, 0.77], skyZen: [0.21, 0.27, 0.5], sunGlow: [0.04, 0.05, 0.08], cloudLit: [0.64, 0.7, 0.87], cloudShade: [0.31, 0.36, 0.55],
+  paper: [0.83, 0.89, 1.0], ray: [0.02, 0.03, 0.05], bloom: 0.62, disc: 0.9, star: 1,
 };
+const DAY = [
+  { h: 0, ...NIGHT, night: 0.5 },
+  { h: 4, ...NIGHT, night: 0.3 },
+  { // 寅末：天将明未明，一片青灰
+    h: 5.1, sunCol: [0.47, 0.51, 0.67], shade: [0.47, 0.51, 0.67], fogD: 112, fogCol: [0.63, 0.67, 0.8],
+    skyHor: [0.76, 0.73, 0.82], skyZen: [0.31, 0.39, 0.63], sunGlow: [0.02, 0.02, 0.03], cloudLit: [0.69, 0.7, 0.84], cloudShade: [0.42, 0.46, 0.62],
+    paper: [0.88, 0.91, 1.0], ray: [0, 0, 0], bloom: 0.45, disc: 0, star: 0.3, night: 0.2,
+  },
+  { // 卯正：日出，晨雾带着暖色
+    h: 6.1, sunCol: [1.12, 0.9, 0.7], shade: [0.5, 0.5, 0.68], fogD: 112, fogCol: [1.14, 0.98, 0.84],
+    skyHor: [1.2, 0.96, 0.76], skyZen: [0.6, 0.68, 0.94], sunGlow: [0.26, 0.14, 0.05], cloudLit: [1.24, 1.02, 0.84], cloudShade: [0.64, 0.62, 0.78],
+    paper: [1.0, 0.97, 0.92], ray: [0.3, 0.2, 0.1], bloom: 0.44, disc: 1, star: 0, night: 0,
+  },
+  { // 辰正：上午
+    h: 8, sunCol: [1.13, 1.065, 0.95], shade: [0.57, 0.605, 0.72], fogD: 175, fogCol: [1.085, 1.06, 1.015],
+    skyHor: [1.1, 1.065, 1.0], skyZen: [0.67, 0.825, 1.05], sunGlow: [0.07, 0.05, 0.02], cloudLit: [1.2, 1.185, 1.14], cloudShade: [0.78, 0.83, 0.93],
+    paper: [1, 1, 1], ray: [0.14, 0.115, 0.07], bloom: 0.3, disc: 1, star: 0, night: 0,
+  },
+  { // 午正
+    h: 12, sunCol: [1.1, 1.07, 1.0], shade: [0.6, 0.65, 0.76], fogD: 200, fogCol: [1.07, 1.07, 1.05],
+    skyHor: [1.08, 1.075, 1.05], skyZen: [0.6, 0.79, 1.07], sunGlow: [0.03, 0.03, 0.02], cloudLit: [1.22, 1.21, 1.18], cloudShade: [0.8, 0.86, 0.95],
+    paper: [1, 1, 1.01], ray: [0.05, 0.05, 0.04], bloom: 0.26, disc: 1, star: 0, night: 0,
+  },
+  { // 申：午后，光色渐暖
+    h: 15.5, sunCol: [1.13, 1.05, 0.92], shade: [0.58, 0.61, 0.73], fogD: 185, fogCol: [1.09, 1.05, 0.99],
+    skyHor: [1.11, 1.05, 0.97], skyZen: [0.63, 0.79, 1.04], sunGlow: [0.08, 0.05, 0.02], cloudLit: [1.21, 1.17, 1.1], cloudShade: [0.78, 0.8, 0.9],
+    paper: [1, 0.995, 0.98], ray: [0.14, 0.11, 0.07], bloom: 0.3, disc: 1, star: 0, night: 0,
+  },
+  { // 酉正：黄昏
+    h: 17.6, sunCol: [1.22, 0.98, 0.7], shade: [0.5, 0.49, 0.67], fogD: 130, fogCol: [1.16, 0.96, 0.76],
+    skyHor: [1.22, 0.93, 0.66], skyZen: [0.62, 0.66, 0.92], sunGlow: [0.28, 0.15, 0.04], cloudLit: [1.25, 1.0, 0.76], cloudShade: [0.62, 0.58, 0.74],
+    paper: [1.0, 0.955, 0.88], ray: [0.32, 0.2, 0.09], bloom: 0.48, disc: 1, star: 0, night: 0.12,
+  },
+  { // 戌初：日落后的余晖，华灯初上
+    h: 18.7, sunCol: [0.51, 0.49, 0.67], shade: [0.51, 0.49, 0.67], fogD: 120, fogCol: [0.79, 0.67, 0.73],
+    skyHor: [0.96, 0.69, 0.63], skyZen: [0.37, 0.41, 0.69], sunGlow: [0.1, 0.05, 0.03], cloudLit: [0.87, 0.67, 0.67], cloudShade: [0.46, 0.44, 0.62],
+    paper: [0.91, 0.91, 0.97], ray: [0, 0, 0], bloom: 0.6, disc: 0, star: 0.3, night: 0.75,
+  },
+  { h: 20, ...NIGHT, night: 1 },
+  { h: 22, ...NIGHT, night: 0.9 },
+  { h: 24, ...NIGHT, night: 0.5 },
+];
 const post = { paper: new THREE.Vector3(1, 1, 1), ray: new THREE.Vector3(0.13, 0.11, 0.07), bloom: 0.3 };
-export function setTimeOfDay(name) {
-  const t = TIMES[name] || TIMES.morning;
-  shared.uSun.value.set(...t.sun).normalize();
-  shared.uSunCol.value.set(...t.sunCol);
-  shared.uShadeTint.value.set(...t.shade);
-  shared.uFogK.value = 1 / (t.fogD * t.fogD);
-  shared.uFogCol.value.set(...t.fogCol);
-  shared.uSkyHor.value.set(...t.skyHor);
-  shared.uSkyZen.value.set(...t.skyZen);
-  shared.uSunGlow.value.set(...t.sunGlow);
-  shared.uCloudLit.value.set(...t.cloudLit);
-  shared.uCloudShade.value.set(...t.cloudShade);
-  post.paper.set(...t.paper);
-  post.ray.set(...t.ray);
-  post.bloom = t.bloom;
-  return t;
+// 把光色设到某个钟点
+export function setDayTime(hour) {
+  const h = ((hour % 24) + 24) % 24;
+  let i = 0;
+  while (i < DAY.length - 2 && h >= DAY[i + 1].h) i++;
+  const a = DAY[i], b = DAY[i + 1], t = Math.min(1, Math.max(0, (h - a.h) / (b.h - a.h)));
+  const L = (k) => a[k] + (b[k] - a[k]) * t;
+  const V = (u, k) => u.set(a[k][0] + (b[k][0] - a[k][0]) * t, a[k][1] + (b[k][1] - a[k][1]) * t, a[k][2] + (b[k][2] - a[k][2]) * t);
+  // 日月的方位：日头卯时自东升、午时在南、酉时西沉；入夜换月亮照旧自东而西
+  let x, y, z;
+  if (h >= 5.1 && h < 18.7) {
+    const ang = ((h - 5.6) / 12.8) * Math.PI;
+    x = Math.cos(ang); y = Math.sin(ang) * 0.95 - 0.04; z = 0.42;
+  } else {
+    const ang = (((h - 18.7 + 24) % 24) / 10.4) * Math.PI;
+    x = Math.cos(ang) * 0.9; y = Math.sin(ang) * 0.8 - 0.02; z = 0.5;
+  }
+  shared.uSun.value.set(x, Math.max(0.06, y), z).normalize();
+  V(shared.uSunCol.value, 'sunCol');
+  V(shared.uShadeTint.value, 'shade');
+  const fogD = L('fogD');
+  shared.uFogK.value = 1 / (fogD * fogD);
+  V(shared.uFogCol.value, 'fogCol');
+  V(shared.uSkyHor.value, 'skyHor');
+  V(shared.uSkyZen.value, 'skyZen');
+  V(shared.uSunGlow.value, 'sunGlow');
+  V(shared.uCloudLit.value, 'cloudLit');
+  V(shared.uCloudShade.value, 'cloudShade');
+  V(post.paper, 'paper');
+  V(post.ray, 'ray');
+  post.bloom = L('bloom');
+  shared.uDisc.value = L('disc');
+  shared.uStar.value = L('star');
+  shared.uNight.value = L('night');
 }
 
 // ───────────────────────── 活气 ─────────────────────────
@@ -176,6 +231,8 @@ uniform vec3 uSkyZen;
 uniform vec3 uSunGlow;
 uniform vec3 uCloudLit;
 uniform vec3 uCloudShade;
+uniform float uDisc;
+uniform float uStar;
 float cloudN(vec2 cu, float tt){
   return texture(tNoise, cu * 0.16 + vec2(tt, tt*0.3)).r * 0.66 + texture(tNoise, cu * 0.47 + vec2(-tt*1.6, 0.31)).g * 0.3 + texture(tNoise, cu * 1.3 + 0.7).b * 0.04;
 }
@@ -188,7 +245,15 @@ vec3 skyColor(vec3 D){
   vec3 col = mix(uSkyHor, uSkyZen, clamp(blue, 0.0, 1.0));
   float sdn = dot(D, uSun);
   col += uSunGlow * (smoothstep(0.72, 1.0, sdn) * 0.7 + pow(max(sdn, 0.0), 40.0) * 0.9);
-  col = mix(col, vec3(1.22, 1.2, 1.12), smoothstep(0.9976, 0.9989, sdn) * 0.92);
+  // 星：夜里天上疏疏几点（云后面的被云遮住）
+  if(uStar > 0.01 && up > 0.0){
+    vec2 sg = cu * 46.0, sid = floor(sg);
+    float sh = fract(sin(dot(sid, vec2(12.9898, 78.233))) * 43758.5453);
+    vec2 sp = fract(sg) - 0.5 - (vec2(fract(sh * 7.13), fract(sh * 13.7)) - 0.5) * 0.6;
+    col += vec3(0.5, 0.52, 0.46) * uStar * step(0.972, sh) * (1.0 - smoothstep(0.0, 0.09, length(sp))) * smoothstep(0.04, 0.3, up);
+  }
+  // 日（夜里是月）的轮廓
+  col = mix(col, vec3(1.22, 1.2, 1.12), smoothstep(0.9976, 0.9989, sdn) * 0.92 * uDisc);
   float tt = uTime * 0.003;
   float n = cloudN(cu, tt);
   // 朝日头一侧偏移再取一次：密度向日头递减的一面即向光面
@@ -216,6 +281,7 @@ uniform float uWaterY;
 uniform vec3 uShadeTint;
 uniform vec3 uSunCol;
 uniform vec3 uFogCol;
+uniform float uNight;
 uniform float uTime;
 uniform float uFogK;
 uniform vec3 uSun;
@@ -348,6 +414,14 @@ void main(){
   float back = pow(max(dot(normalize(vWorld - cameraPosition), uSun), 0.0), 5.0);
   col = mix(col, col * vec3(1.3, 1.25, 0.92) + vec3(0.04, 0.035, 0.0), back * 0.7);
   #endif
+  #endif
+  #ifdef NIGHTGLOW
+  {
+    // 入夜窗里透出灯火：一户一户地亮起来，夜深了又一户一户地熄
+    float hsh = fract(sin(dot(floor(vObj.xz / 6.5), vec2(127.1, 311.7))) * 43758.5453);
+    float lit = smoothstep(hsh - 0.05, hsh + 0.05, uNight * 1.1) * step(0.01, uNight);
+    col = mix(col, tex.rgb * vec3(1.46, 1.1, 0.6), lit * 0.86);
+  }
   #endif
   // 晕染：颜料浓淡随世界空间低频噪声起伏
   float nz = texture(tNoise, wuv * 0.06).r;
@@ -515,6 +589,7 @@ const common = () => ({
   uReflPass: shared.uReflPass,
   uWaterY: shared.uWaterY,
   uShadeTint: shared.uShadeTint,
+  uNight: shared.uNight,
 });
 const skyUniforms = () => ({
   uSkyHor: shared.uSkyHor,
@@ -522,6 +597,8 @@ const skyUniforms = () => ({
   uSunGlow: shared.uSunGlow,
   uCloudLit: shared.uCloudLit,
   uCloudShade: shared.uCloudShade,
+  uDisc: shared.uDisc,
+  uStar: shared.uStar,
 });
 
 // 选项：bump 由贴图明暗推出的凹凸（米）；tile 瓦垄；weather 墙面雨痕；leaf 逆光透亮；life 人物的呼吸与小动作
@@ -539,6 +616,7 @@ export function inkMat(o = {}) {
   if (o.life) defines.LIFE = '';
   if (o.fade) defines.FADE = '';
   if (o.inkFade) defines.INKFADE = '';
+  if (o.nightGlow) defines.NIGHTGLOW = '';
   const m = new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3,
     defines,

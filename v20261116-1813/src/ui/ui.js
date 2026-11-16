@@ -33,8 +33,8 @@ export class UI {
         <div id="marker" class="hidden"><div class="seal m-seal"><span></span></div><div class="m-text"></div></div>
         <div id="quest"><div class="seal">任</div><div><div id="q-title"></div><div id="q-desc"></div><div id="q-extra"></div></div></div>
         <div id="right"><div id="mini-wrap" data-k="KeyM"><canvas id="minimap"></canvas><div id="mini-north" class="seal">北</div><div id="mini-key">M · 展开画卷</div></div>
-        <div id="purse"><span class="coin"></span><b id="money">0</b>文<span class="sep">｜</span>行囊 <span id="load">0/8</span></div></div>
-        <div id="tbtns"><button class="tbtn" data-k="KeyV">视</button><button class="tbtn" data-k="KeyT">时</button><button class="tbtn" data-k="KeyM">卷</button><button class="tbtn" data-k="Tab">囊</button><button class="tbtn" data-k="Escape">歇</button></div>
+        <div id="purse"><span id="shichen"></span><span class="sep">｜</span><span class="coin"></span><b id="money">0</b>文<span class="sep">｜</span>行囊 <span id="load">0/8</span></div></div>
+        <div id="tbtns"><button class="tbtn" data-k="KeyV">视</button><button class="tbtn" data-k="KeyM">卷</button><button class="tbtn" data-k="Tab">囊</button><button class="tbtn" data-k="Escape">歇</button></div>
         <button id="tb-jump" class="tbtn" data-k="Space">跃</button>
         <button id="tb-act" class="tbtn hidden" data-k="KeyE">谈</button>
         <div id="joy" class="hidden"><div id="joy-knob"></div></div>
@@ -123,6 +123,10 @@ export class UI {
       rh.classList.remove('hidden');
       setTimeout(() => rh.classList.add('hidden'), 5000);
     } else if (!portrait) rh.classList.add('hidden');
+  }
+  // 当前时辰（子丑寅卯……）
+  setClock(c) {
+    this.$('#shichen').textContent = c + '时';
   }
   setTouch(v) {
     if (this.touch === v) return;
