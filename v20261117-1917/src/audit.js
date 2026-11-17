@@ -4,7 +4,7 @@ import { colliders, blocked, groundY, surfaceAt, onRoad, covered, edgeWidth, NOD
 import { riverSD, riverHW, bankOf, RV } from './world/river.js';
 import { terrainH } from './world/terrain.js';
 import { TRAFFIC } from './world/traffic.js';
-import { bridgeSoffit } from './world/layout.js';
+import { bridgeSoffit, boatSurface, deckWorld } from './world/layout.js';
 
 const r1 = (v) => Math.round(v * 10) / 10, r2 = (v) => Math.round(v * 100) / 100;
 // 小件、本来就不该挡人的（按 at() 记下的函数源码开头认）
@@ -162,6 +162,52 @@ export function audit(game, world, MAP) {
     if (low < 0.6) add('行船过不了桥洞', ['船长 ' + L, ...lp, '余 ' + r2(low)]);
     // 桅要在船头进桥洞之前放倒
     if (TRAFFIC.LOWER[0] + TRAFFIC.MAST_T * tb.speed > -(BRIDGE.hw + L)) add('行船到桥前桅还没放倒', ['船长 ' + L]);
+    // ── 行船是能上去的：甲板得走得通（两舷的走道、船头都到得了），两舷都攀得上去 ──
+    const d = tb.deck;
+    if (d && d.x < 1e8) {
+      const N = 0.2, nx = Math.ceil(L / N), nz = Math.ceil(B / N), free = new Uint8Array(nx * nz);
+      const cell = (lx, lz) => Math.floor((lx + L / 2) / N) + nx * Math.floor((lz + B / 2) / N);
+      for (let i = 0; i < nx; i++)
+        for (let j = 0; j < nz; j++) {
+          const lx = -L / 2 + (i + 0.5) * N, lz = -B / 2 + (j + 0.5) * N, [wx, wz] = deckWorld(d, lx, lz), y = d.y + boatDeckLocal((2 * lx) / L);
+          if (boatSurface(d, wx, wz, y + 0.1) !== null && !colliders.hit(wx, wz, 0.35, y)) free[i + nx * j] = 1;
+        }
+      const hb0 = boatHalfBeam(B, 0.1) - 0.3, seen = new Uint8Array(nx * nz), todo = [cell(L * 0.05, hb0)];
+      if (free[todo[0]]) seen[todo[0]] = 1;
+      else add('行船的舷边站不了人', ['船长 ' + L]);
+      while (todo.length) {
+        const c = todo.pop(), i = c % nx, j = (c / nx) | 0;
+        for (const [a, b2] of [[i + 1, j], [i - 1, j], [i, j + 1], [i, j - 1]]) {
+          if (a < 0 || b2 < 0 || a >= nx || b2 >= nz) continue;
+          const k = a + nx * b2;
+          if (free[k] && !seen[k]) (seen[k] = 1), todo.push(k);
+        }
+      }
+      const reach = (lx, lz) => {
+        // 那一处附近（半步之内）有走得到的格子就算
+        for (let ox = -0.4; ox <= 0.4; ox += 0.2) for (let oz = -0.4; oz <= 0.4; oz += 0.2) if (seen[cell(lx + ox, lz + oz)]) return true;
+        return false;
+      };
+      let fore = 0;
+      for (let lx = -L * 0.36 + 1.6; lx < -L * 0.12 - 0.4; lx += N) for (let lz = -B / 2; lz < B / 2; lz += N) if (seen[cell(lx, lz)]) fore++;
+      const lost = [];
+      if (!reach(L * 0.05, -hb0)) lost.push('到不了另一舷的走道');
+      if (!reach(-L * 0.44, 0)) lost.push('到不了船头');
+      if (fore * N * N < 6) lost.push('货堆与篷舱之间能站的地方不足六平米');
+      if (lost.length) add('行船甲板走不通', ['船长 ' + L, ...lost]);
+      // 攀舷：两舷正中各试一处
+      const pl = game.player, keep = [pl.x, pl.z];
+      for (const sz of [-1, 1]) {
+        [pl.x, pl.z] = deckWorld(d, 0, sz * (boatHalfBeam(B, 0) + 0.6));
+        if (!game.climbSpot()) add('行船攀不上去', ['船长 ' + L, sz > 0 ? '左舷' : '右舷']);
+      }
+      [pl.x, pl.z] = keep;
+    }
+  }
+  // 载着人的船：出画、进画的两处都得在可走范围之外（烟水合上时人下不了船，进画时也不是凭空冒在眼前）
+  for (const [name, s] of [['出画处', TRAFFIC.OUT], ['进画处', TRAFFIC.IN]]) {
+    const p = TRAFFIC.poseAt(s), out = Math.max(BOUNDS.minX - p.x, p.x - BOUNDS.maxX, BOUNDS.minZ - p.z, p.z - BOUNDS.maxZ);
+    if (out < 20) add('行船' + name + '离可走范围太近', [s, r1(p.x), r1(p.z), '界外 ' + r1(out)]);
   }
 
   // ── 脚夫的路线：一路都得有地可踩、没东西挡、没有一步跨不上的坎 ──

@@ -3,9 +3,13 @@
 //
 // 航线：河心线上按弧长定一条“偏左偏右多少”的线（LANE），让开泊着的船：码头一段从里外两排泊船之间穿过，
 // 过桥时回到正中（桥洞正中最高），桥西靠右岸泊着三条，略往左让。改动泊船的位置之后要回来核这条线（审查脚本会查）。
+//
+// 行船是能上去的：甲板、篷顶、舵楼顶都能站人，人站上去就随船走（game.js 里记着人在船身坐标的哪儿，每帧照船的新位置摆回去）。
+// 上船两条路——从虹桥上翻过栏杆跳下去，落在正过桥的船上；或者泅水靠到船舷边攀上去。下船就跳进水里游上岸。
+// 船载着人出了可走的范围（BOUNDS）之后人下不了船；到 OUT 处烟水一合，整条河的船一齐挪到让这条船在 IN 处重新进画（loopBack）。
 import * as P from './parts.js';
 import { CHANNELS } from './river.js';
-import { colliders, BRIDGE, hullReach } from './layout.js';
+import { colliders, BRIDGE, hullReach, boatDeckLocal, awningTop, addRideDeck, boatSurface, deckLocal, STEP } from './layout.js';
 import { buildObject } from '../engine/batch.js';
 import { figure, randomLook } from './figures.js';
 import { markDynamic, veiled, shared } from '../engine/ink.js';
@@ -18,7 +22,9 @@ const LANE = [[0, 0], [420, 0], [470, 0.5], [545, 0.5], [590, 9], [622, 9], [668
 // 头尾各 FADE 米是从烟水里慢慢显出来、隐进去的
 const S0 = 118, S1 = 1070, FADE = 55;
 const LOWER = [-115, 60], MAST_T = 14, MAST_DOWN = 1.36; // 离桥多远开始放桅、过桥多远再竖起；放、竖各用多少秒；放倒的角度（弧度）
-export const TRAFFIC = { boats: [], poseAt: null, S0, S1, LOWER, MAST_T, MAST_DOWN };
+// 载着人的船：过了 OUT（已在可走范围以北五六十步）烟水合上，回到 IN（东边进画之前二十来息）
+const OUT = 905, IN = 240;
+export const TRAFFIC = { boats: [], poseAt: null, S0, S1, LOWER, MAST_T, MAST_DOWN, OUT, IN };
 
 // 河心线：位置与弧长
 const PTS = CHANNELS[0].pts, ARC = [0];
@@ -46,8 +52,12 @@ function lane(s) {
 }
 // 航线上弧长 s 处的位置
 function point(s) {
-  const [x, z, tx, tz] = centre(s), o = lane(s);
-  return [x + tz * o, z - tx * o];
+  const [x, z] = centre(s), o = lane(s);
+  if (!o) return [x, z];
+  // 往旁边偏的方向取前后各三米两点的连线，不用所在那一小段的方向：河心线是折线，逐段的方向在折点上会跳一下，
+  // 船偏着河心走时（桥前那一段偏出去九米）就跟着横跳几公分——镜头跟着船时看得出一顿
+  const a = centre(s + 3), b = centre(s - 3), dx = a[0] - b[0], dz = a[1] - b[1], l = Math.hypot(dx, dz) || 1;
+  return [x + (dz / l) * o, z - (dx / l) * o];
 }
 // 船在航线上 s 处的位置与朝向（朝向取船头船尾两处的连线，长船拐弯才顺）
 export function poseAt(s) {
@@ -73,14 +83,39 @@ export function shove(x, z, y, r = 0.35) {
     const p = b.pose;
     if (!p) continue;
     const dx = x - p.x, dz = z - p.z, h = b.L / 2;
-    if (Math.abs(dx) + Math.abs(dz) > b.L || y + 0.35 >= b.geom.Y + 0.9 || y + 1.7 <= b.geom.Y - 3) continue;
+    if (Math.abs(dx) + Math.abs(dz) > b.L) continue;
     const co = Math.cos(p.rot), si = Math.sin(p.rot), lx = dx * co - dz * si, lz = dx * si + dz * co;
+    // 站在甲板上（或更高处）的人不归它管
+    if (y + 0.35 >= b.deck.y + boatDeckLocal(Math.max(-1, Math.min(1, lx / h))) - 0.06 || y + 1.7 <= b.deck.y - 3) continue;
     const need = hullReach(h, b.B, lx, r) + 0.004;
     if (need < 0.01 || Math.abs(lz) >= need) continue;
     const nl = lz >= 0 ? need : -need;
     return [p.x + lx * co + nl * si, p.z - lx * si + nl * co];
   }
   return null;
+}
+
+// 脚底在 (x, y, z) 的人站在哪条行船上（甲板、篷顶、舵楼顶）；不在船上则 null
+export function boatUnder(x, z, y) {
+  for (const b of TRAFFIC.boats) {
+    const h = boatSurface(b.deck, x, z, y + 0.3 - STEP);
+    if (h !== null && y - h < 0.3) return b;
+  }
+  return null;
+}
+// 跳起来的人是不是还在这条船的上方（还带着船的速度）
+export function overBoat(b, x, z) {
+  const [lx, lz] = deckLocal(b.deck, x, z);
+  return Math.abs(lx) < b.L / 2 + 1 && Math.abs(lz) < b.B / 2 + 1;
+}
+// 载着人的船出了画：烟水合上的那一瞬，把整条河的船一齐往前挪，让这条船回到东边进画处（船与船的间隔不变）
+export function loopBack(boat) {
+  const span = S1 - S0, d = IN - boat.s;
+  for (const b of TRAFFIC.boats) {
+    b.s = S0 + ((((b.s - S0 + d) % span) + span) % span);
+    b.mast = null;
+    b.tick(b.t || 0, 0);
+  }
 }
 
 export function riverTraffic(c) {
@@ -91,22 +126,32 @@ export function riverTraffic(c) {
   SPECS.forEach((sp, bi) => {
     // 桅轴的高度：放倒的桅要正好从篷顶上头掠过去。桅高按船长
     const { L, B } = sp, mx = -L * 0.2, cr = B * 0.37, PIV = 0.45 + cr, MH = L * 0.28, HEEL = PIV - 0.55;
+    const men = []; // 船上站着的人：[x, z, 脚底高]，登记成挡人的小盒子
     const grp = buildObject(c.mats, (bb) => {
       P.boat(bb, { rng, L, B, mast: 'none' });
       // 桅夹：桅杆夹在一副立柱当中，绕柱顶的横栓转
       for (const sz of [-1, 1]) bb.rod('wood', [mx, 0.5, sz * 0.78], [mx, PIV + 0.16, sz * 0.3], 0.09, 0.07, 5, { color: W_.dark });
       bb.rod('wood', [mx, PIV, -0.42], [mx, PIV, 0.42], 0.05, 0.05, 5, { color: W_.deep });
       // 甲板上的船工；篷顶上还有几个，过桥时在上头呼喝、撑持
+      // 都站在货堆与篷舱之间那一片，靠当中：两舷各留出一条走得过人的道；也不挤在桅夹上、不叠在一起
       for (let i = 0; i < sp.crew; i++) {
-        const px = rng.f(-L * 0.42, -L * 0.24), pz = rng.f(-B * 0.3, B * 0.3);
+        let px = 0, pz = 0;
+        for (let k = 0; k < 30; k++) {
+          px = rng.f(-L * 0.36 + 2.0, -L * 0.12 - 0.8);
+          pz = rng.f(-B * 0.22, B * 0.22);
+          if (Math.abs(px - mx) > 0.7 && men.every((m) => Math.hypot(m[0] - px, m[1] - pz) > 0.75)) break;
+        }
+        men.push([px, pz, 0.42]);
         bb.place(px, 0.42, pz, rng.f(6.28), () => figure(bb, { ...randomLook(rng, 'labor'), prop: null, arms: rng.pick(['reach', 'down', 'carry', 'hail']), staticLegs: true }));
       }
-      // 站在篷脊两侧，给放倒的桅让出当中一条
+      // 站在篷顶两侧偏外，给放倒的桅让出当中一条，篷脊两边也各留一条能走人的
       for (let i = 0; i < 4; i++) {
-        const pz = (i % 2 ? 1 : -1) * rng.f(0.95, 1.35);
-        bb.place(-1 + i * 2.2, 0.7 + Math.sqrt(cr * cr - pz * pz) - 0.06, pz, -PI / 2 + rng.f(-0.5, 0.5), () => figure(bb, { ...randomLook(rng, 'labor'), prop: null, arms: rng.pick(['reach', 'hail']), staticLegs: true }));
+        const pz = (i % 2 ? 1 : -1) * rng.f(1.3, 1.45), py = awningTop(cr, pz) - 0.06;
+        men.push([-1 + i * 2.2, pz, py]);
+        bb.place(-1 + i * 2.2, py, pz, -PI / 2 + rng.f(-0.5, 0.5), () => figure(bb, { ...randomLook(rng, 'labor'), prop: null, arms: rng.pick(['reach', 'hail']), staticLegs: true }));
       }
       // 船尾摇橹的
+      men.push([L * 0.36, 0.5, 2.42]);
       bb.place(L * 0.36, 2.42, 0.5, PI / 2, () => figure(bb, { ...randomLook(rng, 'labor'), prop: null, arms: 'reach', staticLegs: true }));
     });
     // 桅：单成一件，绕桅夹上的轴放倒、竖起
@@ -128,17 +173,34 @@ export function riverTraffic(c) {
     grp.add(sweep);
     c.scene.add(markDynamic(grp)); // 船在走：不参加跨帧累积，否则拖影
     const veil = veiled(grp); // 河的两头：从烟水里显出来，又隐进去
-    // 船身、篷舱的碰撞盒跟着船走：水里的人会被船身推开，镜头也不钻进船里
-    const hull = [{ lx: 0, box: colliders.addDynHull(L, B, Y - 3, Y + 0.9) }, { lx: L * 0.075, box: colliders.addDyn(L * 0.195, B * 0.37, Y + 0.3, Y + 3.4) }];
+    // 船身、篷舱、舵楼、桅夹、货堆、船工的碰撞跟着船走：水里的人被船身推开，甲板上的人绕着它们走，镜头也不钻进去
+    const sx = L * 0.36, sw = L * 0.13, ax0 = -L * 0.12, ax1 = L * 0.27;
+    // 放倒的桅顺着篷脊躺着（只在放倒时挡人）
+    const ridge = { x0: mx + 0.6, x1: mx + MH * 0.97, z0: -0.14, z1: 0.14, y0: PIV, y1: PIV + MH * 0.22 + 0.2, off: true };
+    const body = colliders.addBody(L / 2 + 4, [
+      { hull: true, hl: L / 2, B },
+      { x0: ax0, x1: ax1, z0: -cr + 0.05, z1: cr - 0.05, y0: 0.3, cr }, // 篷舱（顶是拱的，上头能站人）
+      { x0: sx - sw / 2, x1: sx + sw / 2, z0: -B * 0.31, z1: B * 0.31, y0: 0.3, y1: 2.36 }, // 舵楼
+      { x0: mx - 0.14, x1: mx + 0.14, z0: -0.85, z1: 0.85, y0: 0.3, y1: PIV + 0.3 }, // 桅夹
+      { x0: -L * 0.36 - 1.5, x1: -L * 0.36 + 1.5, z0: -B * 0.25, z1: B * 0.25, y0: 0.3, y1: 1.3 }, // 船头的货堆
+      ridge,
+      ...men.map(([x, z, y]) => ({ x0: x - 0.24, x1: x + 0.24, z0: z - 0.24, z1: z + 0.24, y0: y, y1: y + 1.7 })),
+    ]);
+    // 能站人的面：甲板，篷顶（两头各探出一拃，人从篷的两头下得来；两侧太陡不算），舵楼顶（就是那块探出檐的顶板）
+    const deck = addRideDeck(L, B, [
+      { x0: ax0 - 0.2, x1: ax1 + 0.2, hz: cr * 0.74, cr },
+      { x0: sx - sw / 2 - 0.25, x1: sx + sw / 2 + 0.25, hz: B * 0.31 + 0.25, y: 2.42 },
+    ]);
     // 船上的号子：河心离岸远，听得见的范围放大些；字浮在篷顶的人头上
     const FAR = ['嘿哟——嘿哟——', '顺水，稳着些。', '前头就是虹桥了。'], NEAR = ['落桅——落桅——', '往左！往左打橹！', '当心桥——', '稳住！稳住！'];
     const crier = { x: 1e5, z: 1e5, y: Y + 0.7 + cr, r: 34, lines: FAR };
     c.criers.push(crier);
-    const boat = { s: S0 + ((S1 - S0) * bi) / SPECS.length + 40, speed: 2.2, L, B, grp, mast: null, geom: { Y, mx, PIV, MH, cr } };
+    const boat = { s: S0 + ((S1 - S0) * bi) / SPECS.length + 40, speed: 2.2, L, B, grp, mast: null, deck, body, geom: { Y, mx, PIV, MH, cr } };
     boats.push(boat);
     TRAFFIC.boats.push(boat);
     const ph = rng.f(6);
-    c.dynamic.push((t, dt = 0.016) => {
+    boat.tick = (t, dt = 0.016) => {
+      boat.t = t;
       boat.s += boat.speed * dt;
       if (boat.s > S1) boat.s = S0;
       const p = (boat.pose = poseAt(boat.s));
@@ -154,17 +216,18 @@ export function riverTraffic(c) {
       mast.rotation.z = -e * MAST_DOWN;
       sweep.rotation.y = Math.sin(t * 2.1 + ph) * 0.26;
       const co = Math.cos(p.rot), si = Math.sin(p.rot);
-      for (const h of hull) {
-        h.box.cx = p.x + h.lx * co;
-        h.box.cz = p.z - h.lx * si;
-        h.box.co = co;
-        h.box.si = si;
-      }
+      body.cx = deck.x = p.x;
+      body.cz = deck.z = p.z;
+      body.co = deck.co = co;
+      body.si = deck.si = si;
+      body.y = deck.y = grp.position.y;
+      ridge.off = boat.mast < 0.6;
       shared.uWake.value[bi].set(p.x, p.z, p.rot, L / 2);
       crier.x = p.x;
       crier.z = p.z;
       crier.lines = d > -90 && d < 20 ? NEAR : FAR;
-    });
+    };
+    c.dynamic.push(boat.tick);
   });
   // 桥上的人：有船逼近桥洞时冲着船喊，平时仍是轿马相争
   if (c.bridgeCrier) {

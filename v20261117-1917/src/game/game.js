@@ -4,16 +4,18 @@ import { CAPACITY, SELL_MARKUP, START_CAPITAL, GOODS, DECOR, QUESTS, TALK } from
 import { DecorSystem } from './decor.js';
 import { AvatarAnim } from './avatar.js';
 import { makeFigure, makePlayerAvatar, Crowd, poseHead } from '../world/figures.js';
-import { HOME, GATE, NODES, POIS, poi, route, nearestNode, groundY, blocked, inRailZone, surfaceAt, outOfBounds, districtAt, colliders, ceilAt } from '../world/layout.js';
+import { HOME, GATE, NODES, POIS, poi, route, nearestNode, groundY, blocked, inRailZone, surfaceAt, outOfBounds, districtAt, colliders, ceilAt, BOUNDS, BOAT_DECKS, RIDE_DECKS, boatHalfBeam, boatDeckLocal, boatSurface, deckLocal, deckWorld, overDeck } from '../world/layout.js';
 import { mainRiverSD, riverSD, riverHW, bankOf, bankHeight, RV } from '../world/river.js';
 import { terrainH } from '../world/terrain.js';
 import { addRipple, markDynamic } from '../engine/ink.js';
-import { shove } from '../world/traffic.js';
+import { shove, boatUnder, overBoat, loopBack, TRAFFIC } from '../world/traffic.js';
 import { RNG, mulberry32, clamp, angDiff } from '../util.js';
 
 const SAVE_KEY = 'qingming.save.v1';
 const _p1 = new THREE.Vector3(), _q1 = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _eu = new THREE.Euler(), _mt = new THREE.Matrix4(), _UP = new THREE.Vector3(0, 1, 0);
 const mixN = (a, b, t) => a + (b - a) * t;
+// 出了可走的范围多远（在范围里则 0）
+const beyond = (x, z) => Math.max(BOUNDS.minX - x, x - BOUNDS.maxX, BOUNDS.minZ - z, z - BOUNDS.maxZ, 0);
 const START = { x: 401, z: -38, yaw: 1.5 };
 // 存档第 2 版：世界按原画重排并放大，坐标与旧档不通
 const HOME_SHIFT = [-138, -14];
@@ -94,8 +96,9 @@ export class Game {
     }
   }
   save() {
-    const p = this.player;
-    this.s.pos = { x: p.x, z: p.z, yaw: p.yaw };
+    // 人在行船上（或正随船在画外）：记最后一处踏实的地方——船是会走的，读档时它早不在那儿了
+    const p = this.player, q = (p.ride || p.climb || outOfBounds(p.x, p.z)) && this._safe ? this._safe : p;
+    this.s.pos = { x: q.x, z: q.z, yaw: q.yaw };
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify(this.s));
     } catch {
@@ -116,7 +119,12 @@ export class Game {
     if (isNew) this.reset();
     else this.load();
     const p = this.player, pos = this.s.pos || START;
-    Object.assign(p, { x: pos.x, z: pos.z, yaw: pos.yaw, pitch: 0, vx: 0, vz: 0, vy: 0, y: groundY(pos.x, pos.z), ground: true, swim: false, face: pos.yaw + Math.PI });
+    Object.assign(p, { x: pos.x, z: pos.z, yaw: pos.yaw, pitch: 0, vx: 0, vz: 0, vy: 0, y: groundY(pos.x, pos.z), ground: true, swim: false, face: pos.yaw + Math.PI, ride: null, climb: null });
+    this._safe = null;
+    if (this._mist) {
+      this._mist = null;
+      this.ui.fade(false);
+    }
     this.view = this.s.flags.view || 'tp';
     this.mode = 'play';
     // 入画的头一个镜头：自身后高处摇下来，落到平常的机位（见 update 里“镜头”一节）
@@ -312,9 +320,46 @@ export class Game {
   }
   jump() {
     const p = this.player;
-    if (this.decorMode || p.swim || !p.ground) return;
+    if (this.decorMode || p.climb) return;
+    if (p.swim) {
+      // 泅水靠在船舷边：攀上去
+      const c = this.climbSpot();
+      if (c) {
+        const q = deckWorld(c.d, c.lx, c.lz);
+        p.climb = { ...c, t: 0, x0: p.x, y0: p.y, z0: p.z };
+        p.face = Math.atan2(q[0] - p.x, q[1] - p.z);
+        this.sound.sfx('place');
+      }
+      return;
+    }
+    if (!p.ground) return;
     p.vy = 6.6;
     p.ground = false;
+  }
+  // 泅水的人靠在哪条船的舷边、能攀到甲板的哪儿（泊船、行船都算）：{ d 甲板记录, lx, lz 船身坐标 }；够不着则 null
+  climbSpot() {
+    const p = this.player;
+    let best = null, bg = 1.0;
+    for (const list of [BOAT_DECKS, RIDE_DECKS])
+      for (const d of list) {
+        if (Math.abs(p.x - d.x) > d.R + 1 || Math.abs(p.z - d.z) > d.R + 1) continue;
+        const [lx, lz] = deckLocal(d, p.x, p.z), t = (2 * lx) / d.L;
+        if (Math.abs(t) > 0.9) continue;
+        const gap = Math.abs(lz) - boatHalfBeam(d.B, t);
+        if (gap > bg || gap < -0.3) continue;
+        // 落脚处：舷边往里一两拃；那儿有东西挡着就沿船身前后挪一挪
+        out: for (const ox of [0, 0.7, -0.7, 1.4, -1.4])
+          for (const inset of [0.42, 0.56, 0.3]) {
+            const tx = (2 * (lx + ox)) / d.L;
+            if (Math.abs(tx) > 0.93) continue;
+            const sl = Math.sign(lz) * (boatHalfBeam(d.B, tx) - inset), q = deckWorld(d, lx + ox, sl), ty = d.y + boatDeckLocal(tx);
+            if (colliders.hit(q[0], q[1], 0.35, ty) || boatSurface(d, q[0], q[1], ty + 0.1) === null) continue;
+            best = { d, lx: lx + ox, lz: sl };
+            bg = gap;
+            break out;
+          }
+      }
+    return best;
   }
   pause() {
     this.save();
@@ -695,10 +740,46 @@ export class Game {
     }
     for (const g in s.sold) s.sold[g] = Math.max(0, s.sold[g] - dt / 14);
 
+    // 载着人的船出了画：烟水一合，又自东边水上回来（河是一卷画，卷尾接着卷首）
+    if (p.ride && !this._mist && p.ride.s > TRAFFIC.OUT) {
+      this._mist = { t: 0, done: false };
+      ui.fade(true);
+    }
+    if (this._mist) {
+      const m = this._mist;
+      m.t += dt;
+      if (m.t > 1.15 && !m.done) {
+        m.done = true;
+        if (p.ride) loopBack(p.ride);
+        ui.toast('烟水茫茫——船又自东边水上而来');
+      }
+      if (m.t > 1.8) {
+        ui.fade(false);
+        this._mist = null;
+      }
+    }
+    // 行船：人站在船上就随船走——上一帧记下人在船身坐标的哪儿，这一帧照船的新位置摆回去（朝向也跟着船转）
+    if (p.ride) {
+      const q = deckWorld(p.ride.deck, p.rl[0], p.rl[1]), dr = angDiff(p.ride.pose.rot, p.rrot);
+      p.x = q[0];
+      p.z = q[1];
+      p.yaw += dr;
+      p.face += dr;
+    }
+    const rd = p.ride ? p.ride.deck : null;
+    // 撞没撞上：平常连画卷的边界一起算。站在行船上时船会驶出边界——甲板范围里只算碰撞体，到了界外就下不了船；
+    // 万一人落在了界外的水里（船正过边界时跳了水），只许往回游，不许再往外
+    const solid = (x, z, dyn = true) => {
+      if (rd && overDeck(rd, x, z)) return colliders.hit(x, z, 0.35, p.y, 1.7, dyn);
+      if (outOfBounds(x, z)) return rd || beyond(x, z) >= beyond(p.x, p.z) - 1e-6 ? true : colliders.hit(x, z, 0.35, p.y, 1.7, dyn);
+      return blocked(x, z, 0.35, p.y, dyn);
+    };
+
     // 行走
     const k = this.keys, free = !ui.modal;
     let f = 0, r = 0, run = k.ShiftLeft || k.ShiftRight;
-    if (free) {
+    if (p.climb) this.move = null;
+    else if (free) {
       f = (k.KeyW || k.ArrowUp ? 1 : 0) - (k.KeyS || k.ArrowDown ? 1 : 0);
       r = (k.KeyD || k.ArrowRight ? 1 : 0) - (k.KeyA || k.ArrowLeft ? 1 : 0);
       if (this.move) {
@@ -716,16 +797,21 @@ export class Game {
     p.vx += (tvx - p.vx) * acc;
     p.vz += (tvz - p.vz) * acc;
     const nx = p.x + p.vx * dt, nz = p.z + p.vz * dt;
-    if (outOfBounds(nx, nz) && this.boundT <= 0 && (f || r)) {
+    if (outOfBounds(nx, nz) && this.boundT <= 0 && (f || r) && !p.ride) {
       ui.toast('前路烟霭迷蒙——画卷至此而尽');
       this.boundT = 6;
     }
     this.boundT -= dt;
     // 在船上、跳板上走，不会一脚踩空掉进水里（甲板没有栏杆，舷边的走道又窄）；要下水得跳
     const aboard = p.ground && !p.swim && riverSD(p.x, p.z) < -0.45 && !surfaceAt(p.x, p.z, p.y).water;
-    const drop = (x, z) => aboard && riverSD(x, z) < -0.45 && surfaceAt(x, z, p.y).water;
+    // 也不从篷顶的两侧迈下去：底下是篷舱里头，落不了脚（篷的两头可以下）
+    const drop = (x, z) => {
+      if (!aboard || riverSD(x, z) >= -0.45) return false;
+      const q = surfaceAt(x, z, p.y);
+      return q.water || (q.y < p.y - 0.6 && colliders.hit(x, z, 0.15, q.y));
+    };
     // 走不动时往旁边让一点再试：船是斜着泊的，贴着船身、沿着舷边走（游）要能顺着滑过去，不能卡住
-    const clear = (x, z) => !blocked(x, z, 0.35, p.y) && !drop(x, z);
+    const clear = (x, z) => !solid(x, z) && !drop(x, z);
     const ex = Math.abs(nx - p.x) * 0.5, ez = Math.abs(nz - p.z) * 0.5;
     if (clear(nx, p.z)) p.x = nx;
     else if (ex > 1e-5 && clear(nx, p.z + ex)) (p.x = nx), (p.z += ex);
@@ -737,16 +823,16 @@ export class Game {
     else p.vz = 0;
     // 行船开过来：把水里的人往旁边分开（挪过去的地方若有别的东西挡着就不挪，交给下面那一步）
     const sv = shove(p.x, p.z, p.y);
-    if (sv && !blocked(sv[0], sv[1], 0.35, p.y, false)) {
+    if (sv && !solid(sv[0], sv[1], false)) {
       p.x = sv[0];
       p.z = sv[1];
     }
-    if (blocked(p.x, p.z, 0.35, p.y, !sv)) {
+    if (solid(p.x, p.z, !sv)) {
       // 已经嵌在什么东西里了（比如从船边跳下水，正落在船身边上）：朝最近的空处挪出去，免得卡死
       out: for (const d of [0.2, 0.4, 0.7, 1.1, 1.6])
         for (let k = 0; k < 8; k++) {
           const qx = p.x + Math.sin(k * 0.7854) * d, qz = p.z + Math.cos(k * 0.7854) * d;
-          if (!blocked(qx, qz, 0.35, p.y)) {
+          if (!solid(qx, qz)) {
             p.x = qx;
             p.z = qz;
             break out;
@@ -805,7 +891,22 @@ export class Game {
       }
     }
     const floatY = RV.WATER_Y - 1.08; // 泅水时脚底的高度：只露头肩
-    if (surf.water) {
+    if (p.climb) {
+      // 攀舷上船：半息工夫，从水里翻到甲板上（船在走，落脚处跟着船）
+      const c = p.climb, u = Math.min(1, (c.t += dt / 0.6)), e = u * u * (3 - 2 * u);
+      const q = deckWorld(c.d, c.lx, c.lz), ty = c.d.y + boatDeckLocal((2 * c.lx) / c.d.L);
+      p.x = mixN(c.x0, q[0], e);
+      p.z = mixN(c.z0, q[1], e);
+      p.y = mixN(c.y0, ty, e) + Math.sin(u * Math.PI) * 0.3;
+      p.vx = p.vz = p.vy = 0;
+      p.swim = false;
+      p.ground = false;
+      if (u >= 1) {
+        p.climb = null;
+        p.y = ty;
+        p.ground = true;
+      }
+    } else if (surf.water) {
       if (p.y <= floatY + 0.05 || p.swim) {
         if (!p.swim) {
           p.swim = true;
@@ -842,6 +943,24 @@ export class Game {
           p.vy = 0;
           p.ground = true;
         }
+      }
+    }
+    // 站在哪条行船上（跳起来还在船的上方也算：人带着船的速度）；不在船上、脚踏实地时记下这一处（存档用）
+    {
+      const b = p.swim || p.climb ? null : p.ground ? boatUnder(p.x, p.z, p.y) : p.ride && overBoat(p.ride, p.x, p.z) ? p.ride : null;
+      if (b && !p.ride && !s.flags.rode) {
+        s.flags.rode = 1;
+        ui.toast('上了行船——船顺水自己走；要下船，跳进水里游上岸');
+      }
+      p.ride = b;
+      if (b) {
+        p.rl = deckLocal(b.deck, p.x, p.z);
+        p.rrot = b.pose.rot;
+      } else if (p.ground && !outOfBounds(p.x, p.z)) {
+        const q = this._safe || (this._safe = {});
+        q.x = p.x;
+        q.z = p.z;
+        q.yaw = p.yaw;
       }
     }
     p.step += sp * dt * 1.9;
@@ -908,7 +1027,7 @@ export class Game {
         const qx = ox + dx * t, qz = oz + dz * t, qy = ty + 0.3 + dy * t;
         // 脚下是水的地方，“地面”按水面算（河床不在地形里，原先人一下水镜头就缩到贴脸）
         const gq = riverSD(qx, qz) < 0 ? RV.WATER_Y : groundY(qx, qz);
-        if (colliders.hit(qx, qz, 0.3, qy - 0.3, 0.5) || outOfBounds(qx, qz) || (qy < gq + 0.25 && p.y - terrainH(p.x, p.z) < 1.5)) break;
+        if (colliders.hit(qx, qz, 0.3, qy - 0.3, 0.5) || (!p.ride && outOfBounds(qx, qz)) || (qy < gq + 0.25 && p.y - terrainH(p.x, p.z) < 1.5)) break;
         dist = t;
       }
       this._cd = this._cd === undefined ? dist : dist < this._cd ? dist : this._cd + (dist - this._cd) * Math.min(1, dt * 5);
@@ -1005,7 +1124,9 @@ export class Game {
     }
     this.focus = free && !this.decorMode ? focus : null;
     this.focusObj = !this.focus && free && !this.decorMode && this.inHome() ? this.decor.pick(cam) : null;
-    if (this.focus) {
+    const cs = p.swim && free && !p.climb ? this.climbSpot() : null;
+    if (cs) ui.setPrompt('跃', '攀上船', RIDE_DECKS.includes(cs.d) ? '行船' : '泊船');
+    else if (this.focus) {
       const n = this.npcs.get(this.focus).spec;
       ui.setPrompt('E', `${n.name}`, n.title);
     } else if (this.focusObj) ui.setPrompt('E', DECOR[this.focusObj.rec.id].name, '陈设');
