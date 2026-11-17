@@ -17,6 +17,8 @@ const sstep = (a, b, x) => {
 };
 const mix = (a, b, t) => a + (b - a) * t;
 const _m = new THREE.Matrix4(), _v = new THREE.Vector3(), _e = new THREE.Euler(), _q = new THREE.Quaternion();
+// 量袍摆外包用的一圈方向
+const ND = 48, DIRS = Array.from({ length: ND }, (_, i) => [Math.sin((i / ND) * TAU), Math.cos((i / ND) * TAU)]);
 
 // 带阻尼的弹簧：w 越大越硬；z 是阻尼比（1 不回弹，小于 1 会冲过头再回正）
 class Spring {
@@ -80,7 +82,9 @@ export class AvatarAnim {
         rows[k].zb = Math.min(rows[k].zb, p0[i * 3 + 2]);
       }
       o.frustumCulled = false;
-      this.sk.push({ P, p0, rows, rowOf, F: rows.map(() => [1, 1]), B: rows.map(() => [1, 1]), off: rows.map(() => 0) });
+      const vr = rows.map(() => []);
+      for (let i = 0; i < P.count; i++) vr[rowOf[i]].push(i);
+      this.sk.push({ P, p0, rows, rowOf, vr, hs: new Float32Array(ND), zs: new Float32Array(P.count), F: rows.map(() => [1, 1]), B: rows.map(() => [1, 1]), off: rows.map(() => 0) });
     });
   }
 
@@ -91,11 +95,12 @@ export class AvatarAnim {
     const j = this.j, legs = [];
     if (!rest)
       for (const [leg, shin] of [[j.legL, j.shinL], [j.legR, j.shinR]]) {
-        // 胯 → 膝 → 踝，各取几点（连同腿的粗细）
-        const th = leg.rotation.x, kn = th + shin.rotation.x, hy = leg.position.y, hz = leg.position.z;
-        const ky = hy - L1 * Math.cos(th), kz = hz - L1 * Math.sin(th), pts = [];
-        for (let t = 0; t <= 1.001; t += 0.25) pts.push([mix(hy, ky, t), mix(hz, kz, t), mix(0.1, 0.085, t), leg.position.x]);
-        for (let t = 0.2; t <= 1.001; t += 0.2) pts.push([ky - L2 * Math.cos(kn) * t, kz - L2 * Math.sin(kn) * t, mix(0.085, 0.07, t), leg.position.x]);
+        // 胯 → 膝 → 踝，各取几点（连同腿的粗细）。腿往外撇（rotation.z）时膝、踝也跟着往外去，一并算上
+        const th = leg.rotation.x, kn = th + shin.rotation.x, hy = leg.position.y, hz = leg.position.z, hx = leg.position.x;
+        const cs = Math.cos(leg.rotation.z), sn = Math.sin(leg.rotation.z);
+        const ky = hy - L1 * Math.cos(th) * cs, kz = hz - L1 * Math.sin(th) * cs, kx = hx + L1 * sn, pts = [];
+        for (let t = 0; t <= 1.001; t += 0.125) pts.push([mix(hy + 0.04, ky, t), mix(hz, kz, t), mix(0.088, 0.08, t), mix(hx, kx, t)]);
+        for (let t = 0.2; t <= 1.001; t += 0.2) pts.push([ky - L2 * Math.cos(kn) * cs * t, kz - L2 * Math.sin(kn) * cs * t, mix(0.082, 0.07, t), kx + L2 * sn * t]);
         legs.push(pts);
       }
     for (const m of this.sk) {
@@ -113,26 +118,50 @@ export class AvatarAnim {
               const z = pz - this.skBase.z - off[k];
               f = Math.max(f, (z + R) / (0.9 * rows[k].zf));
               b = Math.max(b, (z - R) / (0.9 * rows[k].zb));
-              near[k].push([px, z, R + 0.014]);
+              // 留一点余量；离中轴远的（甩出去的小腿）余量大些：一圈上相邻两个顶点之间是直的，离得越远兜得越不严
+              near[k].push([px, z, R + 0.012 + 0.035 * Math.hypot(px, z)]);
             }
           // 整片只撑开一半，余下的靠下面“就地顶出去”补足：不然疾行时前襟会鼓成一口钟
           F[k][i] = 1 + (Math.min(f, 2.8) - 1) * 0.5;
           B[k][i] = 1 + (Math.min(b, 2.8) - 1) * 0.5;
         }
       }
-      const a = m.P.array, p0 = m.p0;
-      for (let i = 0, c = m.P.count; i < c; i++) {
-        const k = m.rowOf[i], x0 = p0[i * 3], z0 = p0[i * 3 + 2], w = sstep(-0.1, 0.1, x0);
-        let z = z0 * (z0 >= 0 ? mix(F[k][0], F[k][1], w) : mix(B[k][0], B[k][1], w));
-        // 整片撑开之后，腿外侧那一圈仍可能露在袍摆的侧前、侧后：就地再顶出去，正好包住腿
-        for (const [sx, sz, R] of near[k]) {
-          const dx = x0 - sx;
-          if (dx > -R && dx < R) {
-            const e = Math.sqrt(R * R - dx * dx);
-            z = z0 >= 0 ? Math.max(z, sz + e) : Math.min(z, sz - e);
-          }
+      // 整片撑开之后再让袍摆正好罩住腿。这一圈的轮廓取“原来的一圈”与“这一段高度里腿上各点（每点是个圆）”合起来的外包：
+      // 像布搭在腿上绷出来的样子——前襟、后摆、两侧一并管。原先只往前、往后顶：两侧的顶点被分别推到腿的前头和后头，
+      // 当中没有顶点兜着，大腿的外侧就从袍子两边露了出来。
+      // 做法：朝一圈方向各量一次“最远伸到哪儿”（hs），顶点沿自己的方向退到这个外包上（比原处近则不动，衣褶照旧）
+      const a = m.P.array, p0 = m.p0, hs = m.hs, zs = m.zs;
+      for (let k = 0; k < n; k++) {
+        const idx = m.vr[k], C = near[k], wrap = k > 0 && C.length > 0; // 腰带那一圈不动
+        for (const i of idx) {
+          const z0 = p0[i * 3 + 2], w = sstep(-0.1, 0.1, p0[i * 3]);
+          zs[i] = z0 * (z0 >= 0 ? mix(F[k][0], F[k][1], w) : mix(B[k][0], B[k][1], w));
         }
-        a[i * 3 + 2] = z + off[k];
+        if (wrap)
+          for (let d = 0; d < ND; d++) {
+            const vx = DIRS[d][0], vz = DIRS[d][1];
+            let h = 0;
+            for (const i of idx) h = Math.max(h, 0.93 * (p0[i * 3] * vx + zs[i] * vz));
+            for (const [sx, sz, R] of C) h = Math.max(h, sx * vx + sz * vz + R);
+            hs[d] = h;
+          }
+        for (const i of idx) {
+          let x = p0[i * 3], z = zs[i];
+          if (wrap) {
+            const r0 = Math.hypot(x, z) || 1e-6, ux = x / r0, uz = z / r0;
+            let rh = 1e9;
+            for (let d = 0; d < ND; d++) {
+              const c = ux * DIRS[d][0] + uz * DIRS[d][1];
+              if (c > 0.25) rh = Math.min(rh, hs[d] / c);
+            }
+            if (rh > r0 && rh < 1e8) {
+              x = ux * rh;
+              z = uz * rh;
+            }
+          }
+          a[i * 3] = x;
+          a[i * 3 + 2] = z + off[k];
+        }
       }
       m.P.needsUpdate = true;
     }

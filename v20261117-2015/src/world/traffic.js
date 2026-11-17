@@ -221,6 +221,8 @@ export function riverTraffic(c) {
       body.co = deck.co = co;
       body.si = deck.si = si;
       body.y = deck.y = grp.position.y;
+      deck.rx = grp.rotation.x;
+      deck.rz = grp.rotation.z;
       ridge.off = boat.mast < 0.6;
       shared.uWake.value[bi].set(p.x, p.z, p.rot, L / 2);
       crier.x = p.x;
