@@ -242,10 +242,12 @@ export class UI {
       act.classList.add('hidden');
       return p.classList.add('hidden');
     }
-    p.dataset.k = act.dataset.k = key === 'B' ? 'KeyB' : 'KeyE';
-    act.textContent = key === 'B' ? '置' : '谈';
+    // '跃'：按空格（触屏上是「攀」钮）
+    const jump = key === '跃';
+    p.dataset.k = act.dataset.k = key === 'B' ? 'KeyB' : jump ? 'Space' : 'KeyE';
+    act.textContent = key === 'B' ? '置' : jump ? '攀' : '谈';
     act.classList.remove('hidden');
-    const html = `<span class="key">${key}</span><span>${esc(text)}</span>${sub ? `<small>${esc(sub)}</small>` : ''}`;
+    const html = `<span class="key${jump && !this.touch ? ' wide' : ''}">${jump ? (this.touch ? '攀' : '空格') : key}</span><span>${esc(text)}</span>${sub ? `<small>${esc(sub)}</small>` : ''}`;
     if (p._h !== html) {
       p.innerHTML = html;
       p._h = html;

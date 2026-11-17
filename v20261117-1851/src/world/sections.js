@@ -10,6 +10,7 @@ import { terrainH } from './terrain.js';
 import { buildObject } from '../engine/batch.js';
 import { figure, randomLook, ROBES } from './figures.js';
 import { buildScenery, groundCover, greenery } from './scenery.js';
+import { riverTraffic } from './traffic.js';
 import { FACE, paintLandscape, paintCalligraphy } from '../engine/textures.js';
 
 const PI = Math.PI;
@@ -25,6 +26,7 @@ export function buildSections(c) {
   rural(c);
   docks(c);
   bridge(c);
+  riverTraffic(c);
   outside(c);
   gate(c);
   city(c);
@@ -204,10 +206,15 @@ export function addBoat(c, x, z, rot, o = {}) {
       for (let i = 0; i < 4; i++) bb.place(-1 + i * 2.2, 0.2 + B * 0.37 + 0.4, rng.f(-0.5, 0.5), -PI / 2 + rng.f(-0.5, 0.5), () => figure(bb, { ...randomLook(rng, 'labor'), prop: null, arms: rng.pick(['reach', 'hail']), staticLegs: true }));
     }
   });
+  const ph = rng.f(6);
+  if (o.ghost) {
+    // 只走一遍随机数、不留下任何东西：这条船撤掉了，但后头整片场景的树、人、摊子都是顺着同一串随机数摆的，次序不能乱
+    grp.traverse((m) => m.geometry && m.geometry.dispose());
+    return null;
+  }
   grp.position.set(x, Y, z);
   grp.rotation.y = rot;
   c.scene.add(grp);
-  const ph = rng.f(6);
   c.dynamic.push((t) => {
     grp.position.y = Y + Math.sin(t * 0.9 + ph) * 0.045;
     grp.rotation.z = Math.sin(t * 0.7 + ph) * 0.011;
@@ -272,11 +279,11 @@ function docks(c) {
   const moor = [[190, 5.6, -0.08, 28], [161, 3.9, -0.03, 30], [162, 12.3, -0.02, 27], [129, 3.8, -0.04, 28], [100, 3.9, 0.05, 30], [99, 12.2, 0.07, 26], [70, 4.0, -0.06, 28], [44, 7.4, 0.34, 26]];
   const moored = moor.map(([x, z, rot, L]) => addBoat(c, x, BANK + z, rot, { mast: rng.chance(0.6) ? 'up' : 'none', L, B: 6.4 }));
   // 河心：一条摇橹的，一条由岸上纤夫拉着逆水上行的
-  addBoat(c, 142, BANK + 27, 0.04, { mast: 'none', L: 26, crew: 5 });
+  addBoat(c, 142, BANK + 33, 0.04, { mast: 'none', L: 26, crew: 5 }); // 河心留给行船（见 traffic.js 的航线）
   addBoat(c, 74, BANK + 21, PI + 0.05, { mast: 'up', L: 27, crew: 3 });
   for (let i = 0; i < 6; i++) c.person(106 + i * 1.6, BANK - 2.4 - (i % 2) * 0.6, PI / 2, { ...randomLook(rng, 'labor'), prop: null, arms: 'reach', hat: rng.pick(['scarf', 'douli']), lean: 0.34 });
   c.at(0, 0, 0, () => b.rod('flat', [105, 1.25, BANK - 2.6], [79.4, 10.6, BANK + 21], 0.014, 0.014, 3, { color: [0.4, 0.36, 0.3], lw: 0.5 }));
-  addBoat(c, 226, BANK + 34, 0.5, { small: true });
+  addBoat(c, 222.1, BANK + 43.8, 0.5, { small: true });
   addBoat(c, 118, BANK + 36, -0.1, { small: true });
   // 纲船周老大在岸边点货
   c.npcs.push({ id: 'zhou', name: '周老大', title: '纲船船主', x: 150.6, z: BANK - 5.2, yaw: PI, look: { robe: [0.62, 0.7, 0.76], trim: [0.4, 0.45, 0.5], face: FACE.tanned, hat: 'scarf', arms: 'tuck', s: 1.03 } });
@@ -394,12 +401,14 @@ function bridge(c) {
     c.person(ax, az, A + PI / 2, { ...randomLook(rng, 'labor'), prop: null, arms: 'hail' }, bridgeProfile(-1.6));
     c.person(bx, bz, A - PI / 2, { ...randomLook(rng, 'labor'), prop: null, arms: 'hail', hat: 'scarf' }, bridgeProfile(0.6));
   }
-  c.criers.push({ x: BRIDGE.xc, z: BRIDGE.zc, lines: ['快放桅！要撞上了！', '往左！往左撑！', '让轿！让轿！', '好险——'] });
-  // 桥下：一条大船正放倒桅杆抢过桥洞；桥北还有几条靠岸的
-  addBoat(c, 16, 15.8, -PI / 3, { mast: 'down', L: 30, B: 6.8, crew: 6 });
-  addBoat(c, -30.5, -43.5, -0.72, { mast: 'none', L: 27 });
+  // 桥上的吆喝：平时是轿马相争；有船过桥时（traffic.js 里换词）满桥的人都冲着船喊
+  c.bridgeCrier = { x: BRIDGE.xc, z: BRIDGE.zc, lines: ['让轿！让轿！', '借过——借过——'] };
+  c.criers.push(c.bridgeCrier);
+  // 桥下那条放倒桅杆抢过桥洞的大船，如今是真在走的（traffic.js）；桥北还有几条靠岸的
+  addBoat(c, 16, 15.8, -PI / 3, { mast: 'down', L: 30, B: 6.8, crew: 6, ghost: true });
+  addBoat(c, -34, -40.1, -0.72, { mast: 'none', L: 27 }); // 靠西岸泊，河心留给行船
   addBoat(c, -58, -56, -0.32, { mast: 'up', L: 26 });
-  addBoat(c, -97.2, -70.4, 0.5, { mast: 'none', L: 24, crew: 3 });
+  addBoat(c, -97.6, -67.7, -0.5, { mast: 'none', L: 24, crew: 3 }); // 顺着河身靠岸（原先几乎横在河道上）
   addBoat(c, -22, -64, 2.3, { small: true });
   // 两头桥堍：伞摊、柳树
   for (const [s, t] of [[44, 9], [42, -10], [-45, 10], [-42, -11], [52, -6]]) {

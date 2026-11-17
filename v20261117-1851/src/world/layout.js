@@ -205,6 +205,7 @@ class Colliders {
     this.map = new Map();
     this.boxes = [];
     this.lots = [];
+    this.dyn = [];
   }
   // 宅基：屋里虽能走人，种树、撒房子时仍要整块避开
   addLot(x0, z0, x1, z1) {
@@ -241,8 +242,19 @@ class Colliders {
     Object.assign(b, { cx, cz, hx, hz, co, si });
     return b;
   }
+  // 会走的东西（行船）：一条船一个“体”，不进格子，每次都比；位置、朝向、高低由它自己逐帧改（cx, cz, co, si, y）。
+  // 里头的部件用船身坐标（x 船长方向、z 船宽方向，高度相对 y）：
+  //   { hull: true, hl 半长, B 船宽 }          船身：照船舷的弧线比，顶到甲板——水里的人进不去，站在甲板上的人不受它挡
+  //   { x0, x1, z0, z1, y0, y1 }               盒子（舵楼、桅夹、货堆、船工）
+  //   { x0, x1, z0, z1, y0, cr }               篷舱：顶是拱的（半径 cr），人可以站在篷顶上
+  //   off 为真的部件暂时不算（放倒的桅只在放倒时才挡人）
+  addBody(R, parts) {
+    const b = { cx: 1e9, cz: 1e9, co: 1, si: 0, y: 0, R, parts };
+    this.dyn.push(b);
+    return b;
+  }
   // py：脚底高度（不给则不论高低）。身高 h 的人，自脚上 0.35（可迈过的门槛）到头顶这一段与盒子相交才算撞上
-  hit(x, z, r, py, h = 1.7) {
+  hit(x, z, r, py, h = 1.7, dyn = true) {
     if (py === undefined) for (const t of this.lots) if (x > t.x0 - r && x < t.x1 + r && z > t.z0 - r && z < t.z1 + r) return true;
     const c = this.cell;
     for (let i = Math.floor((x - r) / c); i <= Math.floor((x + r) / c); i++)
@@ -262,6 +274,27 @@ class Colliders {
           if ((x - nx) ** 2 + (z - nz) ** 2 < r * r) return true;
         }
       }
+    if (dyn) for (const b of this.dyn) {
+      const dx = x - b.cx, dz = z - b.cz;
+      if (Math.abs(dx) > b.R || Math.abs(dz) > b.R) continue;
+      const lx = dx * b.co - dz * b.si, lz = dx * b.si + dz * b.co;
+      for (const q of b.parts) {
+        if (q.off) continue;
+        if (q.hull) {
+          if (py !== undefined && (py + 0.35 >= b.y + boatDeckLocal(Math.max(-1, Math.min(1, lx / q.hl))) - 0.06 || py + h <= b.y - 3)) continue;
+          if (Math.abs(lz) < hullReach(q.hl, q.B, lx, r)) return true;
+          continue;
+        }
+        const qx = Math.max(q.x0, Math.min(lx, q.x1)), qz = Math.max(q.z0, Math.min(lz, q.z1));
+        if ((lx - qx) ** 2 + (lz - qz) ** 2 >= r * r) continue;
+        if (py !== undefined) {
+          // 篷顶是拱的：往里收一拃再量高，站在舷边的人才不会半个身子嵌进篷里
+          const top = q.cr ? awningTop(q.cr, Math.max(0, Math.abs(qz) - 0.4)) - 0.06 : q.y1;
+          if (py + 0.35 >= b.y + top || py + h <= b.y + q.y0) continue;
+        }
+        return true;
+      }
+    }
     return false;
   }
 }
@@ -291,12 +324,52 @@ export function addRamp(x0, z0, x1, z1, axis, ya, yb) {
 // ── 船：甲板是能走的。船身随水流斜着泊，甲板中间低、两头翘，不是一块平的矩形，所以单算 ──
 // 断面与 parts.js 的 boat() 一致：t = 船长方向 -1（船头）…1（船尾）
 export const boatHalfBeam = (B, t) => (B / 2) * (1 - 0.5 * Math.abs(t) ** 3);
+// 行船的船身在它自己的坐标 lx 处往两边占到多宽（算上人的半径 r）；船头前三米是它推开的水，从零渐渐张开。不在船身范围则 0
+export function hullReach(hl, B, lx, r) {
+  if (lx < -hl - 3 || lx > hl + r) return 0;
+  return lx < -hl ? (boatHalfBeam(B, -1) + r) * (1 - (-hl - lx) / 3) : boatHalfBeam(B, Math.min(1, lx / hl)) + r;
+}
 export const boatDeckLocal = (t) => 0.39 + 0.8 * Math.abs(t) ** 2.2 + (t > 0 ? 0.3 * t * t : 0);
+// 拱篷顶的高（相对船的基准高；与 parts.js 里篷的画法一致：圆心高 0.7、半径 cr），lz 为离篷脊多远
+export const awningTop = (cr, lz) => 0.7 + Math.sqrt(Math.max(0, cr * cr - lz * lz));
 export const BOAT_DECKS = [];
 export function addBoatDeck(x, z, rot, L, B, y) {
   const d = { x, z, L, B, y, co: Math.cos(rot), si: Math.sin(rot), R: L / 2 + 1 };
   BOAT_DECKS.push(d);
   return d;
+}
+// 行船的甲板：与泊船的一样能走，只是位置、朝向逐帧在变（由 traffic.js 改 x, z, co, si, y）。
+// tops：甲板以上还能站人的面（船身坐标）——{ x0, x1, hz, cr } 拱篷顶，{ x0, x1, hz, y } 平顶（舵楼顶）
+export const RIDE_DECKS = [];
+export function addRideDeck(L, B, tops) {
+  const d = { x: 1e9, z: 1e9, L, B, y: 0, co: 1, si: 0, R: L / 2 + 1, tops };
+  RIDE_DECKS.push(d);
+  return d;
+}
+// 世界坐标 → 这条船的船身坐标 [lx, lz]
+export const deckLocal = (b, x, z) => [(x - b.x) * b.co - (z - b.z) * b.si, (x - b.x) * b.si + (z - b.z) * b.co];
+export const deckWorld = (b, lx, lz) => [b.x + lx * b.co + lz * b.si, b.z - lx * b.si + lz * b.co];
+// (x,z) 是不是在这条船的甲板范围里
+export function overDeck(b, x, z) {
+  const dx = x - b.x, dz = z - b.z;
+  if (Math.abs(dx) > b.R || Math.abs(dz) > b.R) return false;
+  const lx = dx * b.co - dz * b.si, lz = dx * b.si + dz * b.co, t = (2 * lx) / b.L;
+  return Math.abs(t) <= 0.97 && Math.abs(lz) <= boatHalfBeam(b.B, t) - 0.1;
+}
+// (x,z) 处这条船上能踏的面（甲板，或篷顶、舵楼顶）的高；不在船上、或都高出脚底一步以上则 null
+export function boatSurface(b, x, z, py) {
+  const dx = x - b.x, dz = z - b.z;
+  if (Math.abs(dx) > b.R || Math.abs(dz) > b.R) return null;
+  const lx = dx * b.co - dz * b.si, lz = dx * b.si + dz * b.co, t = (2 * lx) / b.L;
+  if (Math.abs(t) > 0.97 || Math.abs(lz) > boatHalfBeam(b.B, t) - 0.1) return null;
+  let h = b.y + boatDeckLocal(t), best = h <= py + STEP ? h : null;
+  if (b.tops)
+    for (const q of b.tops) {
+      if (lx < q.x0 || lx > q.x1 || Math.abs(lz) > q.hz) continue;
+      h = b.y + (q.cr ? awningTop(q.cr, lz) : q.y);
+      if (h <= py + STEP && (best === null || h > best)) best = h;
+    }
+  return best;
 }
 // 跳板（搭在岸与船、船与船之间的斜板）：两端的位置与高度、半宽
 export const GANGS = [];
@@ -314,12 +387,12 @@ function boatAt(x, z, py) {
     if (h <= py + STEP && (best === null || h > best)) best = h;
   }
   for (const b of BOAT_DECKS) {
-    const dx = x - b.x, dz = z - b.z;
-    if (Math.abs(dx) > b.R || Math.abs(dz) > b.R) continue;
-    const lx = dx * b.co - dz * b.si, lz = dx * b.si + dz * b.co, t = (2 * lx) / b.L;
-    if (Math.abs(t) > 0.97 || Math.abs(lz) > boatHalfBeam(b.B, t) - 0.1) continue;
-    const h = b.y + boatDeckLocal(t);
-    if (h <= py + STEP && (best === null || h > best)) best = h;
+    const h = boatSurface(b, x, z, py);
+    if (h !== null && (best === null || h > best)) best = h;
+  }
+  for (const b of RIDE_DECKS) {
+    const h = boatSurface(b, x, z, py);
+    if (h !== null && (best === null || h > best)) best = h;
   }
   return best;
 }
@@ -338,7 +411,8 @@ export function covered(x, z, m = 0.5) {
   return false;
 }
 
-const BLOCK = -999, STEP = 0.82;
+const BLOCK = -999;
+export const STEP = 0.82; // 一步迈得上去的高
 function bridgeAt(x, z) {
   const [bs, bt] = bridgeLocal(x, z);
   if (Math.abs(bs) < BRIDGE.L) {
@@ -376,13 +450,14 @@ export function groundY(x, z) {
 }
 
 // py：脚底高度。栏杆只挡与桥面齐平的人——跃起可越，泅水可自桥下过；河水不是墙。
-export function blocked(x, z, r = 0.35, py = 0) {
+// dyn 为假则不算会走的东西（行船）
+export function blocked(x, z, r = 0.35, py = 0, dyn = true) {
   if (x < BOUNDS.minX || x > BOUNDS.maxX || z < BOUNDS.minZ || z > BOUNDS.maxZ) return true;
   if (bridgeAt(x, z) === BLOCK) {
     const dy = py - bridgeProfile(bridgeLocal(x, z)[0]);
     if (dy < 0.8 && dy > -1.3) return true;
   }
-  return colliders.hit(x, z, r, py);
+  return colliders.hit(x, z, r, py, 1.7, dyn);
 }
 export function inRailZone(x, z) {
   return bridgeAt(x, z) === BLOCK;

@@ -343,7 +343,7 @@ function boot() {
       setDayTime(clock.hour());
     },
     tp(x, z, yawDeg, pitchDeg = 0) {
-      Object.assign(game.player, { x, z, vx: 0, vz: 0 });
+      Object.assign(game.player, { x, z, vx: 0, vz: 0, ride: null, climb: null });
       if (yawDeg !== undefined) game.player.yaw = (yawDeg * Math.PI) / 180;
       game.player.pitch = (pitchDeg * Math.PI) / 180;
     },

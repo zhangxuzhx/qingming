@@ -57,6 +57,7 @@
 /* ── 提示、浮签 ── */
 #prompt { padding: 12px 50px 13px 20px; background: var(--stroke-c) center / 100% 100% no-repeat; border: 0; color: var(--cream); text-shadow: 0 1px 0 rgba(0, 0, 0, 0.35); }
 #prompt .key { width: 32px; min-width: 32px; height: 32px; padding: 0; background: var(--cream); color: var(--ink); border: 0; border-radius: 50%; font-weight: bold; text-shadow: none; }
+#prompt .key.wide { width: auto; padding: 0 11px; border-radius: 16px; font-weight: normal; }
 #prompt small { color: rgba(244, 234, 210, 0.72); }
 .toast { padding: 9px 56px 10px 42px; background: var(--stroke-b) center / 100% 100% no-repeat; border: 0; color: var(--cream); text-shadow: 0 1px 0 rgba(0, 0, 0, 0.35); }
 .toast.gain { background-image: var(--stroke-red); color: #fff3e0; }
