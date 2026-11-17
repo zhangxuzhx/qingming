@@ -52,8 +52,12 @@ function lane(s) {
 }
 // 航线上弧长 s 处的位置
 function point(s) {
-  const [x, z, tx, tz] = centre(s), o = lane(s);
-  return [x + tz * o, z - tx * o];
+  const [x, z] = centre(s), o = lane(s);
+  if (!o) return [x, z];
+  // 往旁边偏的方向取前后各三米两点的连线，不用所在那一小段的方向：河心线是折线，逐段的方向在折点上会跳一下，
+  // 船偏着河心走时（桥前那一段偏出去九米）就跟着横跳几公分——镜头跟着船时看得出一顿
+  const a = centre(s + 3), b = centre(s - 3), dx = a[0] - b[0], dz = a[1] - b[1], l = Math.hypot(dx, dz) || 1;
+  return [x + (dz / l) * o, z - (dx / l) * o];
 }
 // 船在航线上 s 处的位置与朝向（朝向取船头船尾两处的连线，长船拐弯才顺）
 export function poseAt(s) {
@@ -217,6 +221,8 @@ export function riverTraffic(c) {
       body.co = deck.co = co;
       body.si = deck.si = si;
       body.y = deck.y = grp.position.y;
+      deck.rx = grp.rotation.x;
+      deck.rz = grp.rotation.z;
       ridge.off = boat.mast < 0.6;
       shared.uWake.value[bi].set(p.x, p.z, p.rot, L / 2);
       crier.x = p.x;

@@ -932,7 +932,8 @@ export class Game {
       }
       if (p.ground) {
         if (surf.y < p.y - 0.6) p.ground = false; // 踏空
-        else p.y += (surf.y - p.y) * Math.min(1, dt * 12);
+        // 站在船上：甲板随水起伏，脚底紧跟着它（差得不多时不再慢慢跟，免得鞋底一会儿陷进去一会儿离了板）
+        else p.y += (surf.y - p.y) * (riverSD(p.x, p.z) < -0.45 && Math.abs(surf.y - p.y) < 0.05 ? 1 : Math.min(1, dt * 12));
       }
       if (!p.ground) {
         p.vy -= 22 * dt;

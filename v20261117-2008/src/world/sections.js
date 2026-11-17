@@ -215,9 +215,11 @@ export function addBoat(c, x, z, rot, o = {}) {
   grp.position.set(x, Y, z);
   grp.rotation.y = rot;
   c.scene.add(grp);
+  const deck = addBoatDeck(x, z, rot, L, B, Y);
   c.dynamic.push((t) => {
-    grp.position.y = Y + Math.sin(t * 0.9 + ph) * 0.045;
-    grp.rotation.z = Math.sin(t * 0.7 + ph) * 0.011;
+    // 甲板的高跟着船身的起伏走（站在船上的人贴着甲板，不陷进去、不悬空）
+    deck.y = grp.position.y = Y + Math.sin(t * 0.9 + ph) * 0.045;
+    deck.rz = grp.rotation.z = Math.sin(t * 0.7 + ph) * 0.011;
   });
   c.MAP.boats.push({ x, z, rot, L, B });
   // ── 船是能上去的：甲板可走；船身挡住水里的人；篷舱、舵楼、桅、货堆、船工挡住甲板上的人 ──
@@ -227,7 +229,6 @@ export function addBoat(c, x, z, rot, o = {}) {
     const [cx, cz] = W((lx0 + lx1) / 2, lz);
     colliders.addOBB(cx, cz, (lx1 - lx0) / 2, hz, rot, Y + y0, Y + y1);
   };
-  const deck = addBoatDeck(x, z, rot, L, B, Y);
   // 船身：分八段，各段照那里的宽窄与甲板的高低——人在水里游不进去，站在甲板上不受它挡
   for (let k = 0; k < 8; k++) {
     const t0 = -1 + k / 4, t1 = t0 + 0.25, tn = Math.abs(t0) < Math.abs(t1) ? t0 : t1;

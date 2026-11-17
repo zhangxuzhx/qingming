@@ -332,9 +332,11 @@ export function hullReach(hl, B, lx, r) {
 export const boatDeckLocal = (t) => 0.39 + 0.8 * Math.abs(t) ** 2.2 + (t > 0 ? 0.3 * t * t : 0);
 // 拱篷顶的高（相对船的基准高；与 parts.js 里篷的画法一致：圆心高 0.7、半径 cr），lz 为离篷脊多远
 export const awningTop = (cr, lz) => 0.7 + Math.sqrt(Math.max(0, cr * cr - lz * lz));
+// 船在水上是晃的（船身上下浮、船头船尾一起一伏）：y 是船此刻的基准高，rz 是纵摇（绕船宽方向的轴，弧度，船尾高为正），
+// rx 是绕世界 x 轴的那一点横摇——由画船的那一处逐帧填，甲板的高照它算，人才贴着看得见的甲板
 export const BOAT_DECKS = [];
 export function addBoatDeck(x, z, rot, L, B, y) {
-  const d = { x, z, L, B, y, co: Math.cos(rot), si: Math.sin(rot), R: L / 2 + 1 };
+  const d = { x, z, L, B, y, rz: 0, rx: 0, co: Math.cos(rot), si: Math.sin(rot), R: L / 2 + 1 };
   BOAT_DECKS.push(d);
   return d;
 }
@@ -342,7 +344,7 @@ export function addBoatDeck(x, z, rot, L, B, y) {
 // tops：甲板以上还能站人的面（船身坐标）——{ x0, x1, hz, cr } 拱篷顶，{ x0, x1, hz, y } 平顶（舵楼顶）
 export const RIDE_DECKS = [];
 export function addRideDeck(L, B, tops) {
-  const d = { x: 1e9, z: 1e9, L, B, y: 0, co: 1, si: 0, R: L / 2 + 1, tops };
+  const d = { x: 1e9, z: 1e9, L, B, y: 0, rz: 0, rx: 0, co: 1, si: 0, R: L / 2 + 1, tops };
   RIDE_DECKS.push(d);
   return d;
 }
@@ -362,11 +364,13 @@ export function boatSurface(b, x, z, py) {
   if (Math.abs(dx) > b.R || Math.abs(dz) > b.R) return null;
   const lx = dx * b.co - dz * b.si, lz = dx * b.si + dz * b.co, t = (2 * lx) / b.L;
   if (Math.abs(t) > 0.97 || Math.abs(lz) > boatHalfBeam(b.B, t) - 0.1) return null;
-  let h = b.y + boatDeckLocal(t), best = h <= py + STEP ? h : null;
+  // 船身的纵摇、横摇把这一处抬高（压低）多少
+  const base = b.y + lx * b.rz - dz * b.rx;
+  let h = base + boatDeckLocal(t), best = h <= py + STEP ? h : null;
   if (b.tops)
     for (const q of b.tops) {
       if (lx < q.x0 || lx > q.x1 || Math.abs(lz) > q.hz) continue;
-      h = b.y + (q.cr ? awningTop(q.cr, lz) : q.y);
+      h = base + (q.cr ? awningTop(q.cr, lz) : q.y);
       if (h <= py + STEP && (best === null || h > best)) best = h;
     }
   return best;

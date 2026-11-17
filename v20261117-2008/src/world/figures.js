@@ -761,7 +761,8 @@ export function makePlayerAvatar(mats) {
   pivot.add(hg);
   // 袍摆自腰带垂下，另成一件，迈步时随之张合
   const skirt = add(pivot, 0, WAIST - PY, 0, (b) =>
-    loft(b, M, [[HEM - WAIST, 0.2, 0.172, 0, 0.62, 0.9], [(HEM - WAIST) * 0.72, 0.193, 0.163, 0.002, 0.9, 0.94], [(HEM - WAIST) * 0.42, 0.178, 0.146, 0.004, 0.6, 0.97], [0.012, 0.154, 0.116, 0.004, 0.08]].map(ringOf(0)), { color: ROBE, id: b.nextId(), folds: mkFolds(q, 8, 0.07, 0.15, 0.3, 0.6, 3), seg: 22 })
+    // 自下摆到腰五圈；胯那一圈（大腿根的高度）是后添的：原先腰与大腿中段之间只一段直线，罩不住胯
+    loft(b, M, [[HEM - WAIST, 0.2, 0.172, 0, 0.62, 0.9], [(HEM - WAIST) * 0.72, 0.193, 0.163, 0.002, 0.9, 0.94], [(HEM - WAIST) * 0.42, 0.18, 0.148, 0.004, 0.6, 0.97], [HIP - WAIST + 0.03, 0.174, 0.136, 0.004, 0.3, 0.98], [0.012, 0.154, 0.116, 0.004, 0.08]].map(ringOf(0)), { color: ROBE, id: b.nextId(), folds: mkFolds(q, 8, 0.07, 0.15, 0.3, 0.6, 3), seg: 22 })
   );
   // 幞头垂脚（挂在头上，随头转）
   const tails = add(hg, 0, HY + 0.03 - PY - hg.position.y, -0.114 - hg.position.z, (b) => {
@@ -783,7 +784,8 @@ export function makePlayerAvatar(mats) {
     return [a, f];
   };
   const mkLeg = (sx) => {
-    const t = add(pivot, sx * 0.085, HIP - PY, 0, (b) => thigh(b, PANTS, b.nextId()));
+    // 大腿比行人的细一圈：罩在袍子里头，粗了袍摆两侧兜不住（粗细与 avatar.js 的 _drape 里的一致）
+    const t = add(pivot, sx * 0.085, HIP - PY, 0, (b) => cloth(b, [[0, 0.04, 0, 0.086], [0, -0.2, 0.008, 0.084], [0, -(HIP - KNEE) - 0.03, 0.012, 0.078]], PANTS, b.nextId(), { us: 0.5, vs: [1, 0.7, 0.45], seg: 8 }));
     const sh = add(t, 0, -(HIP - KNEE), 0.012, (b) => {
       const id = b.nextId();
       cloth(b, [[0, 0.04, 0, 0.08], [0, -0.14, 0, 0.07]], PANTS, id, { us: 0.5, vs: [0.45, 0.25], seg: 8 });
@@ -868,12 +870,23 @@ export class Crowd {
         const px = -0.17;
         plain(b, [[px, SHY + 0.03, 0.27, 0.04, 0.04], [px, SHY + 0.1, 0.16, 0.1, 0.085], [px, SHY + 0.15, -0.04, 0.16, 0.125], [px + 0.01, SHY + 0.07, -0.26, 0.17, 0.14], [px + 0.01, SHY - 0.05, -0.36, 0.1, 0.09]], [0.9, 0.86, 0.74], b.nextId(), { seg: 10, side: [1, 0, 0] });
       })) sack.add(m);
-      grp.add(sack);
+      // 腰以上（衣身、头、两臂、肩上的包）归到一个组里，轴在胯下一点（短衣的下摆跟着上身走，轴太高下摆会往后撅起一大截）：
+      // 卸包、扛包时从这儿弯下去，两腿仍立着
+      const waist = new THREE.Group(), WY = HIP - 0.07;
+      waist.position.y = WY;
+      for (const ch of [...grp.children]) {
+        if (ch.name === 'leg' || ch.name === 'foot') continue;
+        ch.position.y -= WY;
+        waist.add(ch);
+      }
+      sack.position.y -= WY;
+      waist.add(sack);
+      grp.add(waist);
       far.visible = false;
       this.scene.add(markDynamic(far));
       this.scene.add(markDynamic(grp));
       const ud = grp.userData, at = (i * 0.37) % 1, k = Math.floor(at * (pts.length - 1));
-      this.walkers.push({ grp, far, route: pts, ri: k, dir: i % 2 ? 1 : -1, wait: 0, sack, x: pts[k][0], z: pts[k][1], yaw: 0, speed: rng.f(1.05, 1.3), phase: rng.f(6), s: 1, legs: ud.legs, shins: ud.shins, feet: ud.feet, arms: ud.arms, pause: 0, cd: 1e9, gaze: 0, shy: 0 });
+      this.walkers.push({ grp, far, waist, route: pts, ri: k, dir: i % 2 ? 1 : -1, wait: 0, sack, x: pts[k][0], z: pts[k][1], yaw: 0, speed: rng.f(1.05, 1.3), phase: rng.f(6), s: 1, legs: ud.legs, shins: ud.shins, feet: ud.feet, arms: ud.arms, pause: 0, cd: 1e9, gaze: 0, shy: 0 });
     });
   }
   _porter(w, dt, px, pz) {
@@ -918,24 +931,31 @@ export class Crowd {
     const k = Math.min(1, dt * 10);
     w.amp = (w.amp || 0) + ((moving ? 1 : 0) - (w.amp || 0)) * k;
     const sw = Math.sin(w.phase) * w.amp, cw = Math.cos(w.phase) * w.amp, g = w.grp;
-    const bend = w.wait > 0 ? Math.sin(Math.min(1, w.wait / 2.2) * Math.PI) * 0.55 : 0;
-    w.lean = (w.lean || 0) + ((bend + (carrying ? 0.1 : 0.02)) - (w.lean || 0)) * Math.min(1, dt * 6);
-    g.position.set(w.x, y + Math.abs(Math.cos(w.phase)) * 0.024 * w.amp, w.z);
+    // 到头了弯腰卸下（扛起）麻包：从腰弯下去（上身前俯四五十度），膝微屈、胯往后坐一点；整个人并不斜
+    const bend = w.wait > 0 ? Math.sin(Math.min(1, w.wait / 2.2) * Math.PI) : 0;
+    w.bend = (w.bend || 0) + (bend - (w.bend || 0)) * Math.min(1, dt * 8);
+    w.lean = (w.lean || 0) + ((carrying ? 0.1 : 0.02) - (w.lean || 0)) * Math.min(1, dt * 6);
+    const bd = w.bend, knee = bd * 0.75, th = -bd * 0.5;
+    // 屈膝之后腿短了一截，身子相应落下去；膝往前顶、胯往后坐，脚仍踩在原地（back：胯在脚后头多远）
+    const drop = (HIP - KNEE) * (1 - Math.cos(th)) + KNEE * (1 - Math.cos(th + knee));
+    const back = (HIP - KNEE) * Math.sin(-th) - KNEE * Math.sin(th + knee);
+    g.position.set(w.x - Math.sin(w.yaw) * back, y + Math.abs(Math.cos(w.phase)) * 0.024 * w.amp - drop, w.z - Math.cos(w.yaw) * back);
     g.rotation.set(w.lean, w.yaw + sw * 0.04, sw * 0.02);
+    if (w.waist) w.waist.rotation.x = bd * 0.82;
     if (w.legs) {
-      w.legs[0].rotation.x = sw * 0.42;
-      w.legs[1].rotation.x = -sw * 0.42;
+      w.legs[0].rotation.x = sw * 0.42 + th;
+      w.legs[1].rotation.x = -sw * 0.42 + th;
       if (w.shins) {
-        w.shins[0].rotation.x = Math.max(0, -cw) * 0.8 + 0.06 * w.amp;
-        w.shins[1].rotation.x = Math.max(0, cw) * 0.8 + 0.06 * w.amp;
+        w.shins[0].rotation.x = Math.max(0, -cw) * 0.8 + 0.06 * w.amp + knee;
+        w.shins[1].rotation.x = Math.max(0, cw) * 0.8 + 0.06 * w.amp + knee;
       }
     }
     if (w.arms) {
-      // 扛包的那只手举上去扶着，另一只照常摆
+      // 扛包的那只手举上去扶着，另一只照常摆；弯腰时两手往下够
       const up = carrying ? 1 : 0;
       w.armUp = (w.armUp || 0) + (up - (w.armUp || 0)) * Math.min(1, dt * 6);
-      w.arms[0].rotation.x = -sw * 0.4 * (1 - w.armUp) - 2.55 * w.armUp;
-      w.arms[1].rotation.x = sw * 0.4;
+      w.arms[0].rotation.x = -sw * 0.4 * (1 - w.armUp) - 2.55 * w.armUp - bd * 0.95 * (1 - w.armUp);
+      w.arms[1].rotation.x = sw * 0.4 - bd * 0.95;
     }
   }
   _aim(w) {

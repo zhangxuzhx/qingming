@@ -458,7 +458,7 @@ function boot() {
     world.update(dt, camera);
     // 投影范围跟着视线走
     if (dbg) {
-      ink.shadowRange = 40;
+      ink.shadowRange = dbg.shadow || 40; // 调试机位可另给投影范围（远景要铺开些）、对焦距离
       ink.shadowCenter.set(dbg.target[0], 0, dbg.target[2]);
     } else if (photo.on) {
       // 镜头越高，投影铺得越开
@@ -489,7 +489,7 @@ function boot() {
     ink.expose += ((world.indoor && !photo.on && !dbg ? 1.36 : 1) - ink.expose) * Math.max(0, Math.min(1, raw * 2.5));
     // 景深：各档之间缓缓过渡
     {
-      const tg = photo.on ? { ...DOF_PHOTO[photo.dof], focus: photo.focus } : dbg ? { ...DOF_PLAY, focus: Math.max(9, Math.hypot(dbg.pos[0] - dbg.target[0], dbg.pos[1] - dbg.target[1], dbg.pos[2] - dbg.target[2]) * 0.6) } : game.mode === 'play' ? (game.talkE > 0 ? dofMix(DOF_PLAY, { focus: game.talkD, aper: 5.5, tol: 0.25, nearTol: 0.9, nearK: 1.2 }, game.talkE) : DOF_PLAY) : DOF_TITLE;
+      const tg = photo.on ? { ...DOF_PHOTO[photo.dof], focus: photo.focus } : dbg ? { ...DOF_PLAY, focus: dbg.focus || Math.max(9, Math.hypot(dbg.pos[0] - dbg.target[0], dbg.pos[1] - dbg.target[1], dbg.pos[2] - dbg.target[2]) * 0.6) } : game.mode === 'play' ? (game.talkE > 0 ? dofMix(DOF_PLAY, { focus: game.talkD, aper: 5.5, tol: 0.25, nearTol: 0.9, nearK: 1.2 }, game.talkE) : DOF_PLAY) : DOF_TITLE;
       const k = Math.max(0, Math.min(1, raw * 5));
       for (const key of ['focus', 'aper', 'tol', 'nearTol', 'nearK']) ink.dof[key] += (tg[key] - ink.dof[key]) * k;
     }
