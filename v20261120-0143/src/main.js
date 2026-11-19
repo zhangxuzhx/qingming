@@ -33,6 +33,7 @@ function boot() {
   if (coarse) world.viewDist = 380;
   const ui = new UI(document.getElementById('ui'), MAP);
   const sound = new Sound();
+  sound.listen();
   const game = new Game({ scene, camera, world, ui, sound, crowd: coarse ? 48 : 112 });
   ui.setTouch(coarse);
 
@@ -329,7 +330,14 @@ function boot() {
     ui.fade(false);
   };
   showTitle();
-  ui.loaded();
+  // 卷首曲要等有人点按过页面才出得了声（浏览器的规矩）。所以有卷首曲、又没静音、浏览器也不肯通融的时候，
+  // 载入完先不撤帘子，停在“轻点启卷”上等这一下：帘子一撤，曲子就跟着卷首一起出来
+  // （调试：网址加 ?music=/某个文件夹/ 可以换一套曲子来试，不动 assets/music 里正用着的）
+  const musicDir = /[?&]music=(\.?\/(?!\/)[\w/.-]+)/.exec(location.search);
+  sound.loadMusic(musicDir ? musicDir[1] : undefined).then(async (tracks) => {
+    if (tracks.title && !sound.muted && !(await sound.canPlay())) await ui.gate();
+    ui.loaded();
+  });
 
   // 调试钩子（控制台可用）
   window.__qm = {
@@ -449,6 +457,8 @@ function boot() {
     // 天黑了，直接压在画面上的字要换成浅色
     const dark = hour >= 18.5 || hour < 5.5;
     if (dark !== nightShown) ui.root.classList.toggle('night', (nightShown = dark));
+    // 配乐跟着场合走：卷首一支，街上、家里各分白天夜晚
+    sound.scene = game.mode !== 'play' ? 'title' : (game.inHome() ? 'home-' : '') + (dark ? 'night' : 'day');
     debug.update(raw);
     ui.updateDialogue(dt);
     if (game.mode !== 'play') sound.tick(0.25);
@@ -456,6 +466,7 @@ function boot() {
     if (needHint && hintT > 0) hintT -= dt;
     ui.lockHint(needHint && hintT > 0, noLock);
     world.update(dt, camera);
+    game.afterWorld(!dbg && !photo.on); // 行船挪过之后，把站在船上的主角（和跟着的镜头）带到位
     // 投影范围跟着视线走
     if (dbg) {
       ink.shadowRange = dbg.shadow || 40; // 调试机位可另给投影范围（远景要铺开些）、对焦距离

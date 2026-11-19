@@ -1,0 +1,55 @@
+{
+  "note": "由 tools/music.mjs 生成：曲位 → 曲子。别手改，改了源文件重跑一遍",
+  "tracks": {
+    "title": [
+      {
+        "file": "title.mp3",
+        "gain": 0.944,
+        "len": 183.6,
+        "tail": 3.5,
+        "v": "1a9d4fa9",
+        "from": "卷首.mp3"
+      }
+    ],
+    "day": [
+      {
+        "file": "day.mp3",
+        "gain": 0.861,
+        "len": 182.2,
+        "tail": 0,
+        "v": "5c27d75f",
+        "from": "白天.mp3"
+      }
+    ],
+    "night": [
+      {
+        "file": "night.mp3",
+        "gain": 0.841,
+        "len": 197.3,
+        "tail": 0,
+        "v": "a865e151",
+        "from": "夜晚.mp3"
+      }
+    ],
+    "home-day": [
+      {
+        "file": "home-day.mp3",
+        "gain": 0.851,
+        "len": 136.2,
+        "tail": 0,
+        "v": "0da6e51b",
+        "from": "家白天.mp3"
+      }
+    ],
+    "home-night": [
+      {
+        "file": "home-night.mp3",
+        "gain": 0.881,
+        "len": 147.4,
+        "tail": 0,
+        "v": "54fa2278",
+        "from": "家夜晚.mp3"
+      }
+    ]
+  }
+}

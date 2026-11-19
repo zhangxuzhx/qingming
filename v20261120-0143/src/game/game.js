@@ -1183,6 +1183,38 @@ export class Game {
     }
   }
 
+  // 行船是在主角摆好之后才往前挪的（world.update 排在后头）。挪完把主角、小像和跟着的镜头一并带过去，
+  // 画出来的人才与船严丝合缝；不然人总比船慢一帧，帧率一有起伏，人就在甲板上前后一顿一顿。moveCam：镜头是不是游戏自己的那个
+  afterWorld(moveCam) {
+    const p = this.player, b = p.ride;
+    if (this.mode !== 'play' || !b || !p.rl || p.climb) return;
+    const q = deckWorld(b.deck, p.rl[0], p.rl[1]), dx = q[0] - p.x, dz = q[1] - p.z, dr = angDiff(b.pose.rot, p.rrot);
+    let dy = 0;
+    if (p.ground) {
+      const h = boatSurface(b.deck, q[0], q[1], p.y + 0.1);
+      if (h !== null && Math.abs(h - p.y) < 0.2) dy = h - p.y;
+    }
+    p.x = q[0];
+    p.z = q[1];
+    p.y += dy;
+    p.yaw += dr;
+    p.face += dr;
+    p.rrot = b.pose.rot;
+    const av = this.avatar.position;
+    av.set(av.x + dx, av.y + dy, av.z + dz);
+    this.avatar.rotation.y += dr;
+    if (this._ct) {
+      this._ct.x += dx;
+      this._ct.y += dy;
+      this._ct.z += dz;
+    }
+    if (moveCam) {
+      const c = this.camera.position;
+      c.set(c.x + dx, c.y + dy, c.z + dz);
+      this.camera.updateMatrixWorld();
+    }
+  }
+
   project(x, y, z) {
     _v.set(x, y, z).project(this.camera);
     const behind = _v.z > 1;

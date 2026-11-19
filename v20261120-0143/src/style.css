@@ -52,6 +52,9 @@ button { font-family: inherit; color: inherit; }
 #fade.on { opacity: 1; }
 #loading { position: fixed; z-index: 50; inset: 0; display: grid; place-items: center; background: #e6d7b6; background-image: var(--grain); font-family: var(--xing); font-size: 34px; letter-spacing: 0.4em; color: var(--ink-2); transition: opacity 0.8s; }
 #loading.gone { opacity: 0; }
+#loading.gate { cursor: pointer; }
+#loading.gate span { animation: gate-breathe 2.6s ease-in-out infinite; }
+@keyframes gate-breathe { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
 
 /* ── 卷首 ── */
 #title { position: absolute; inset: 0; pointer-events: auto; }

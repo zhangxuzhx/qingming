@@ -152,6 +152,22 @@ export class UI {
     l.classList.add('gone');
     setTimeout(() => l.remove(), 900);
   }
+  // 载入完了，但浏览器要等人点按一下才许出声：帘子先不撤，等这一下（键盘按一下也算）
+  gate() {
+    const l = document.getElementById('loading');
+    if (!l) return Promise.resolve();
+    l.innerHTML = '<span>轻点启卷</span>';
+    l.classList.add('gate');
+    return new Promise((done) => {
+      const go = () => {
+        removeEventListener('pointerup', go, true);
+        removeEventListener('keydown', go, true);
+        done();
+      };
+      addEventListener('pointerup', go, true);
+      addEventListener('keydown', go, true);
+    });
+  }
   fade(on) {
     this.$('#fade').classList.toggle('on', on);
     return new Promise((r) => setTimeout(r, 820));
